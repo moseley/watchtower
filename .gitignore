@@ -19,6 +19,12 @@ apps/mobile/android/
 .env.*
 !.env.example
 
+# Firebase service-account keys (SECRET — never commit).
+# NOTE: google-services.json is safe to commit and is intentionally NOT ignored.
+*firebase-adminsdk*.json
+*service-account*.json
+google-service-account*.json
+
 # logs
 *.log
 npm-debug.log*
