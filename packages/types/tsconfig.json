@@ -1,0 +1,4 @@
+{
+  "extends": "@watchtower/tsconfig/base.json",
+  "include": ["src"]
+}

@@ -1,0 +1,15 @@
+{
+  "name": "@watchtower/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@watchtower/tsconfig": "workspace:*",
+    "typescript": "^5"
+  }
+}
