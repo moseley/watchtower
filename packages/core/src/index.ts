@@ -1,12 +1,20 @@
 /**
  * Watchtower core — the source-agnostic watcher engine.
  *
- * Phase 1 fills this in: the source-adapter interface (watch a source → match a
- * rule → emit a match), the weather adapter (NWS + Open-Meteo), and the
- * matching logic the cron route calls. Kept empty on purpose for the Phase 0
- * scaffold.
+ *   watch a source → match my criteria → push me a notification
+ *
+ * The engine (`runWatches`) knows only the SourceAdapter interface. Each domain
+ * is an adapter; weather is the first.
  */
-import { APP_NAME } from "@watchtower/types";
+export * from "./adapters/types";
+export * from "./adapters/weather";
+export * from "./push/expo";
+export * from "./engine";
 
-export const CORE_READY = true;
-export const ENGINE_FOR = APP_NAME;
+import { weatherAdapter } from "./adapters/weather";
+import type { SourceAdapter } from "./adapters/types";
+
+/** Default adapter registry. Add new domains here as they ship. */
+export const defaultAdapters: Record<string, SourceAdapter<any>> = {
+  weather: weatherAdapter,
+};

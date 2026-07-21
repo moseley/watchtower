@@ -9,7 +9,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@watchtower/types": "workspace:*"
+    "@watchtower/db": "workspace:*",
+    "@watchtower/types": "workspace:*",
+    "zod": "^4"
   },
   "devDependencies": {
     "@watchtower/tsconfig": "workspace:*",

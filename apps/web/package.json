@@ -10,7 +10,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@watchtower/core": "workspace:*",
+    "@watchtower/db": "workspace:*",
     "@watchtower/types": "workspace:*",
+    "dotenv": "^17.4.2",
     "next": "16.2.11",
     "react": "19.2.4",
     "react-dom": "19.2.4"

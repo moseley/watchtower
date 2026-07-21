@@ -14,9 +14,10 @@ web-build/
 apps/mobile/ios/
 apps/mobile/android/
 
-# env / secrets
+# env / secrets — real values are git-ignored; only .env.example is committed
 .env
-.env*.local
+.env.*
+!.env.example
 
 # logs
 *.log

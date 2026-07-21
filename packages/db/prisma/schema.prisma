@@ -1,0 +1,76 @@
+// Watchtower data layer — Prisma 7 (driver adapters).
+// Connection URLs are supplied at runtime (see src/index.ts) and to the CLI
+// (see prisma.config.ts), not via env() here.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// A user/account anchor. In Phase 1 there is no login — an Owner is created the
+// first time a device registers. Real accounts attach here in Phase 2.
+model Owner {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  devices Device[]
+  watches Watch[]
+}
+
+// A phone. Its Expo push token is how we reach the user in Phase 1.
+model Device {
+  id            String   @id @default(cuid())
+  ownerId       String
+  expoPushToken String   @unique
+  platform      String? // "ios" | "android"
+  createdAt     DateTime @default(now())
+  lastSeenAt    DateTime @default(now())
+
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId])
+}
+
+// A saved alert. Deliberately source-agnostic: `source` names the adapter
+// ("weather") and `config` holds that adapter's location + rule as JSON,
+// validated by Zod in @watchtower/core. New domains = new source values, no
+// schema change.
+model Watch {
+  id            String    @id @default(cuid())
+  ownerId       String
+  source        String
+  label         String
+  config        Json
+  enabled       Boolean   @default(true)
+  lastCheckedAt DateTime?
+  lastMatchedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  owner         Owner          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  notifications Notification[]
+
+  @@index([ownerId])
+  @@index([source, enabled])
+}
+
+// A log of sent pushes. `dedupeKey` makes alerts idempotent so we don't send
+// the same "frost tonight" every poll cycle.
+model Notification {
+  id        String   @id @default(cuid())
+  watchId   String
+  dedupeKey String   @unique
+  title     String
+  body      String
+  payload   Json?
+  status    String   @default("sent") // "sent" | "failed"
+  createdAt DateTime @default(now())
+
+  watch Watch @relation(fields: [watchId], references: [id], onDelete: Cascade)
+
+  @@index([watchId])
+}
