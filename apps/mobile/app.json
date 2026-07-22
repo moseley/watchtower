@@ -7,7 +7,13 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "plugins": [
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Watchtower uses your location to prefill where your weather watches apply."
+        }
+      ]
     ],
     "ios": {
       "supportsTablet": true,
