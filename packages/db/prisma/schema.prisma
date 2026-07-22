@@ -21,14 +21,18 @@ model Owner {
   watches Watch[]
 }
 
-// A phone. Its Expo push token is how we reach the user in Phase 1.
+// Something we can push to: a phone (Expo push token) or a browser
+// (Web Push subscription). `kind` selects the sender in the engine.
 model Device {
-  id            String   @id @default(cuid())
-  ownerId       String
-  expoPushToken String   @unique
-  platform      String? // "ios" | "android"
-  createdAt     DateTime @default(now())
-  lastSeenAt    DateTime @default(now())
+  id                  String   @id @default(cuid())
+  ownerId             String
+  kind                String   @default("expo") // "expo" | "webpush"
+  expoPushToken       String?  @unique
+  webPushEndpoint     String?  @unique
+  webPushSubscription Json? // { endpoint, keys: { p256dh, auth } }
+  platform            String? // "ios" | "android" | "web"
+  createdAt           DateTime @default(now())
+  lastSeenAt          DateTime @default(now())
 
   owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 

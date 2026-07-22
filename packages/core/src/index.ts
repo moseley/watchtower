@@ -9,6 +9,8 @@
 export * from "./adapters/types";
 export * from "./adapters/weather";
 export * from "./push/expo";
+export * from "./push/webpush";
+export * from "./push/dispatcher";
 export * from "./engine";
 
 import { weatherAdapter } from "./adapters/weather";

@@ -1,8 +1,6 @@
 import type { Prisma, PrismaClient } from "@watchtower/db";
 import type { SourceAdapter, WatcherMatch } from "./adapters/types";
-import type { PushMessage, PushResult } from "./push/expo";
-
-export type PushSender = (tokens: string[], message: PushMessage) => Promise<PushResult>;
+import type { DispatchResult, PushSender, PushTarget } from "./push/dispatcher";
 
 export interface RunOptions {
   prisma: PrismaClient;
@@ -73,13 +71,24 @@ export async function runWatches(opts: RunOptions): Promise<RunSummary> {
       const existing = await opts.prisma.notification.findUnique({ where: { dedupeKey } });
       if (existing) continue; // already alerted for this event
 
-      const tokens = watch.owner.devices.map((d) => d.expoPushToken);
-      let result: PushResult = { ok: false, errors: ["owner has no registered devices"] };
-      if (tokens.length > 0) {
-        result = await opts.sendPush(tokens, {
+      const targets: PushTarget[] = watch.owner.devices.map((d) => ({
+        kind: d.kind,
+        expoPushToken: d.expoPushToken,
+        webPushSubscription: d.webPushSubscription,
+      }));
+      let result: DispatchResult = { ok: false, errors: ["owner has no registered devices"] };
+      if (targets.length > 0) {
+        result = await opts.sendPush(targets, {
           title: match.title,
           body: match.body,
           data: match.data,
+        });
+      }
+
+      // Prune browser subscriptions the push service reports as gone.
+      if (result.expiredEndpoints?.length) {
+        await opts.prisma.device.deleteMany({
+          where: { webPushEndpoint: { in: result.expiredEndpoints } },
         });
       }
 

@@ -17,9 +17,28 @@ export const CreateWatchInputSchema = z.object({
 });
 export type CreateWatchInput = z.infer<typeof CreateWatchInputSchema>;
 
-/** A phone registering itself so it can receive pushes (Phase 1 identity). */
-export const DeviceRegistrationSchema = z.object({
-  expoPushToken: z.string().min(1),
-  platform: z.enum(["ios", "android"]).optional(),
+/** A browser's Web Push subscription (PushSubscription.toJSON()). */
+export const WebPushSubscriptionSchema = z.object({
+  endpoint: z.string().url(),
+  keys: z.object({
+    p256dh: z.string().min(1),
+    auth: z.string().min(1),
+  }),
 });
+export type WebPushSubscription = z.infer<typeof WebPushSubscriptionSchema>;
+
+/**
+ * A device registering itself so it can receive pushes (Phase 1 identity):
+ * either a phone with an Expo push token, or a browser with a Web Push
+ * subscription.
+ */
+export const DeviceRegistrationSchema = z.union([
+  z.object({
+    expoPushToken: z.string().min(1),
+    platform: z.enum(["ios", "android"]).optional(),
+  }),
+  z.object({
+    webPushSubscription: WebPushSubscriptionSchema,
+  }),
+]);
 export type DeviceRegistration = z.infer<typeof DeviceRegistrationSchema>;

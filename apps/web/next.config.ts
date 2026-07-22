@@ -10,7 +10,7 @@ const nextConfig: NextConfig = {
   // Workspace packages ship raw TypeScript; Next must transpile them.
   transpilePackages: ["@watchtower/types", "@watchtower/core", "@watchtower/db"],
   // Keep the Prisma/pg stack as server-side externals (not bundled).
-  serverExternalPackages: ["@prisma/client", "@prisma/adapter-pg", "pg"],
+  serverExternalPackages: ["@prisma/client", "@prisma/adapter-pg", "pg", "web-push"],
   // Pin the workspace root so Turbopack doesn't misinfer it in the monorepo.
   turbopack: {
     root: path.join(__dirname, "..", ".."),
