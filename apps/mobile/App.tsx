@@ -13,7 +13,15 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { createWatch, listWatches, registerDevice, type WatchRow } from "./lib/api";
+import {
+  createWatch,
+  deleteWatch,
+  geocode,
+  listWatches,
+  registerDevice,
+  reverseGeocode,
+  type WatchRow,
+} from "./lib/api";
 import { registerForPushNotificationsAsync } from "./lib/push";
 
 type Metric = "temperature" | "precipitation_probability" | "wind_speed";
@@ -25,11 +33,26 @@ const METRICS: { key: Metric; label: string }[] = [
   { key: "wind_speed", label: "Wind" },
 ];
 
+const METRIC_NAMES: Record<Metric, string> = {
+  temperature: "temperature",
+  precipitation_probability: "rain",
+  wind_speed: "wind",
+};
+
+function iconFor(rule?: { metric?: string; comparator?: string }): string {
+  if (rule?.metric === "temperature") return rule.comparator === "below" ? "❄️" : "☀️";
+  if (rule?.metric === "precipitation_probability") return "🌧️";
+  if (rule?.metric === "wind_speed") return "💨";
+  return "🔔";
+}
+
 export default function App() {
   const [ownerId, setOwnerId] = useState<string | null>(null);
   const [status, setStatus] = useState("Starting…");
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [placeLabel, setPlaceLabel] = useState("Home");
+  const [locationText, setLocationText] = useState("");
+  const [locationEdited, setLocationEdited] = useState(false);
+  const [locating, setLocating] = useState(false);
   const [metric, setMetric] = useState<Metric>("temperature");
   const [comparator, setComparator] = useState<Comparator>("below");
   const [threshold, setThreshold] = useState("35");
@@ -53,15 +76,7 @@ export default function App() {
         setStatus(`Setup failed: ${(err as Error).message}`);
       }
 
-      try {
-        const { status: perm } = await Location.requestForegroundPermissionsAsync();
-        if (perm === "granted") {
-          const pos = await Location.getCurrentPositionAsync({});
-          setCoords({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
-        }
-      } catch {
-        // location optional
-      }
+      await useCurrentLocation();
 
       sub = Notifications.addNotificationReceivedListener((n) => {
         const t = n.request.content.title ?? "Notification";
@@ -73,6 +88,35 @@ export default function App() {
     return () => sub?.remove();
   }, []);
 
+  // Auto-hide the in-app push banner after a few seconds.
+  useEffect(() => {
+    if (!lastPush) return;
+    const timer = setTimeout(() => setLastPush(null), 5000);
+    return () => clearTimeout(timer);
+  }, [lastPush]);
+
+  async function useCurrentLocation() {
+    setLocating(true);
+    try {
+      const { status: perm } = await Location.requestForegroundPermissionsAsync();
+      if (perm !== "granted") return;
+      const pos = await Location.getCurrentPositionAsync({});
+      const { latitude, longitude } = pos.coords;
+      setCoords({ latitude, longitude });
+      try {
+        const place = await reverseGeocode(latitude, longitude);
+        setLocationText(place.label);
+      } catch {
+        setLocationText("Current location");
+      }
+      setLocationEdited(false);
+    } catch {
+      // location optional — user can type a city/zip instead
+    } finally {
+      setLocating(false);
+    }
+  }
+
   async function refreshWatches(id: string) {
     try {
       setWatches(await listWatches(id));
@@ -81,10 +125,34 @@ export default function App() {
     }
   }
 
+  function thresholdError(): string | null {
+    const value = Number(threshold);
+    if (threshold.trim() === "" || !Number.isFinite(value)) return "Enter a number";
+    if (metric === "precipitation_probability" && (value < 0 || value > 100)) {
+      return "Rain % must be between 0 and 100";
+    }
+    if (metric === "wind_speed" && value < 0) return "Wind speed can't be negative";
+    return null;
+  }
+
   async function onCreate() {
-    if (!ownerId || !coords) return;
+    if (!ownerId) return;
     setBusy(true);
     try {
+      // Resolve the location: geocode typed input, or reuse GPS coords.
+      let loc: { latitude: number; longitude: number; label: string };
+      if (locationEdited || !coords) {
+        const query = locationText.trim();
+        if (!query) throw new Error("Enter a city or zip code");
+        const hit = await geocode(query);
+        loc = hit;
+        setCoords({ latitude: hit.latitude, longitude: hit.longitude });
+        setLocationText(hit.label);
+        setLocationEdited(false);
+      } else {
+        loc = { ...coords, label: locationText.trim() || "Current location" };
+      }
+
       const value = Number(threshold);
       const rule =
         metric === "temperature"
@@ -94,14 +162,14 @@ export default function App() {
             : { metric, comparator: "above" as const, threshold: value, unit: "mph" as const, withinHours: 12 };
 
       const config = WeatherWatchConfigSchema.parse({
-        location: { latitude: coords.latitude, longitude: coords.longitude, label: placeLabel },
+        location: { latitude: loc.latitude, longitude: loc.longitude, label: loc.label },
         rule,
       });
 
       await createWatch({
         ownerId,
         source: "weather",
-        label: `${placeLabel} · ${metric.replace("_", " ")}`,
+        label: `${loc.label} · ${METRIC_NAMES[metric]}`,
         config,
       });
       setStatus("Watch created ✓");
@@ -113,7 +181,19 @@ export default function App() {
     }
   }
 
-  const canCreate = Boolean(ownerId && coords) && !busy && threshold.trim() !== "";
+  async function onDelete(id: string) {
+    if (!ownerId) return;
+    try {
+      await deleteWatch(id, ownerId);
+      setWatches((rows) => rows.filter((w) => w.id !== id));
+    } catch (err) {
+      setStatus(`Delete failed: ${(err as Error).message}`);
+    }
+  }
+
+  const thresholdProblem = thresholdError();
+  const canCreate =
+    Boolean(ownerId) && !busy && !locating && !thresholdProblem && locationText.trim() !== "";
 
   return (
     <View style={styles.root}>
@@ -131,13 +211,32 @@ export default function App() {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>New weather watch</Text>
 
-          <Text style={styles.fieldLabel}>Label</Text>
-          <TextInput
-            style={styles.input}
-            value={placeLabel}
-            onChangeText={setPlaceLabel}
-            placeholder="Home"
-          />
+          <Text style={styles.fieldLabel}>Location (city or zip code)</Text>
+          <View style={styles.locationRow}>
+            <TextInput
+              style={[styles.input, styles.locationInput]}
+              value={locationText}
+              onChangeText={(text) => {
+                setLocationText(text);
+                setLocationEdited(true);
+              }}
+              placeholder="e.g. Honolulu or 96815"
+              placeholderTextColor="#475569"
+            />
+            <Pressable
+              style={styles.locateButton}
+              onPress={useCurrentLocation}
+              disabled={locating}
+            >
+              {locating ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.locateIcon}>📍</Text>}
+            </Pressable>
+          </View>
+          {coords && !locationEdited && (
+            <Text style={styles.hint}>
+              Using {coords.latitude.toFixed(3)}, {coords.longitude.toFixed(3)}
+            </Text>
+          )}
+          {locationEdited && <Text style={styles.hint}>Will look up this location on create</Text>}
 
           <Text style={styles.fieldLabel}>Metric</Text>
           <View style={styles.chipRow}>
@@ -150,28 +249,24 @@ export default function App() {
             <>
               <Text style={styles.fieldLabel}>When it goes</Text>
               <View style={styles.chipRow}>
-                <Chip label="Below" active={comparator === "below"} onPress={() => setComparator("below")} />
-                <Chip label="Above" active={comparator === "above"} onPress={() => setComparator("above")} />
+                <Chip label="❄️ Below" active={comparator === "below"} onPress={() => setComparator("below")} />
+                <Chip label="☀️ Above" active={comparator === "above"} onPress={() => setComparator("above")} />
               </View>
             </>
           )}
 
           <Text style={styles.fieldLabel}>
-            Threshold {metric === "temperature" ? "(°F)" : metric === "wind_speed" ? "(mph)" : "(%)"}
+            Threshold {metric === "temperature" ? "(°F)" : metric === "wind_speed" ? "(mph)" : "(0–100 %)"}
           </Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, thresholdProblem ? styles.inputError : null]}
             value={threshold}
             onChangeText={setThreshold}
             keyboardType="numeric"
             placeholder="35"
+            placeholderTextColor="#475569"
           />
-
-          <Text style={styles.hint}>
-            {coords
-              ? `Location: ${coords.latitude.toFixed(3)}, ${coords.longitude.toFixed(3)}`
-              : "Waiting for location permission…"}
-          </Text>
+          {thresholdProblem && <Text style={styles.errorHint}>{thresholdProblem}</Text>}
 
           <Pressable
             style={[styles.button, !canCreate && styles.buttonDisabled]}
@@ -192,10 +287,17 @@ export default function App() {
         ) : (
           watches.map((w) => (
             <View key={w.id} style={styles.watchRow}>
-              <Text style={styles.watchLabel}>{w.label}</Text>
-              <Text style={styles.watchMeta}>
-                {w.config.rule?.metric} {w.config.rule?.comparator} {w.config.rule?.threshold}
-              </Text>
+              <Text style={styles.watchIcon}>{iconFor(w.config.rule)}</Text>
+              <View style={styles.watchBody}>
+                <Text style={styles.watchLabel}>{w.config.location?.label ?? w.label}</Text>
+                <Text style={styles.watchMeta}>
+                  {w.config.rule?.metric?.replace(/_/g, " ")} {w.config.rule?.comparator}{" "}
+                  {w.config.rule?.threshold}
+                </Text>
+              </View>
+              <Pressable style={styles.deleteButton} onPress={() => onDelete(w.id)}>
+                <Text style={styles.deleteIcon}>🗑️</Text>
+              </Pressable>
             </View>
           ))
         )}
@@ -235,6 +337,17 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 16,
   },
+  inputError: { borderWidth: 1, borderColor: "#F87171" },
+  locationRow: { flexDirection: "row", gap: 8, alignItems: "center" },
+  locationInput: { flex: 1 },
+  locateButton: {
+    backgroundColor: "#334155",
+    borderRadius: 10,
+    padding: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  locateIcon: { fontSize: 18 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: {
     paddingHorizontal: 14,
@@ -247,7 +360,8 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: "#2563EB", borderColor: "#2563EB" },
   chipText: { color: "#94A3B8", fontWeight: "600" },
   chipTextActive: { color: "#fff" },
-  hint: { color: "#64748B", fontSize: 12, marginTop: 12 },
+  hint: { color: "#64748B", fontSize: 12, marginTop: 8 },
+  errorHint: { color: "#F87171", fontSize: 12, marginTop: 6 },
   button: {
     backgroundColor: "#2563EB",
     borderRadius: 12,
@@ -264,7 +378,14 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 14,
     marginBottom: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
+  watchIcon: { fontSize: 22 },
+  watchBody: { flex: 1 },
   watchLabel: { color: "#fff", fontSize: 15, fontWeight: "600" },
   watchMeta: { color: "#94A3B8", fontSize: 13, marginTop: 4 },
+  deleteButton: { padding: 6 },
+  deleteIcon: { fontSize: 18 },
 });

@@ -125,7 +125,7 @@ function buildMatch(
   const rounded = Math.round(value);
 
   if (rule.metric === "temperature") {
-    const emoji = rule.comparator === "below" ? "❄️" : "🔥";
+    const emoji = rule.comparator === "below" ? "❄️" : "☀️";
     const dir = rule.comparator === "below" ? "below" : "above";
     return {
       dedupeKey: `temperature:${rule.comparator}:${rule.threshold}:${dateStr}`,
