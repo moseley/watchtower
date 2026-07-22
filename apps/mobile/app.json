@@ -28,7 +28,7 @@
       "favicon": "./assets/favicon.png"
     },
     "extra": {
-      "apiUrl": "http://localhost:3005",
+      "apiUrl": "https://watchtower-web-nu.vercel.app",
       "eas": {
         "projectId": "47d0fff9-6f16-4b05-b6b2-054b03e6c106"
       }
