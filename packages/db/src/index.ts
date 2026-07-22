@@ -16,11 +16,23 @@ function createPrismaClient(): PrismaClient {
 // Reuse a single client across hot-reloads / warm serverless invocations.
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
-export const prisma = globalForPrisma.prisma ?? createPrismaClient();
-
-if (process.env["NODE_ENV"] !== "production") {
-  globalForPrisma.prisma = prisma;
+function getPrisma(): PrismaClient {
+  if (!globalForPrisma.prisma) {
+    globalForPrisma.prisma = createPrismaClient();
+  }
+  return globalForPrisma.prisma;
 }
+
+// Lazy proxy: importing this module does NOT construct the client, so a build
+// that only collects route metadata never needs DATABASE_URL. The client is
+// created on first real property access — at runtime, where the env var exists.
+export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
+  get(_target, prop) {
+    const client = getPrisma();
+    const value = Reflect.get(client, prop, client);
+    return typeof value === "function" ? value.bind(client) : value;
+  },
+});
 
 // Re-export generated model types (Owner, Device, Watch, Notification, …)
 export * from "@prisma/client";
