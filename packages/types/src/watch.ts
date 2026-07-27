@@ -1,21 +1,33 @@
 import { z } from "zod";
+import { MusicWatchConfigSchema } from "./music";
 import { WeatherWatchConfigSchema } from "./weather";
 
 /** Every adapter registers a source key. Grows as domains are added. */
-export const WatchSourceSchema = z.enum(["weather"]);
+export const WatchSourceSchema = z.enum(["weather", "music"]);
 export type WatchSource = z.infer<typeof WatchSourceSchema>;
 
 /**
- * Input to create a Watch. Discriminated by `source` so `config` is validated
- * against the right adapter's schema. Today only "weather"; when a second
- * adapter lands this becomes a `z.discriminatedUnion("source", [...])`.
+ * Input to create a Watch, discriminated by `source` so `config` is validated
+ * against the right adapter's schema.
  */
-export const CreateWatchInputSchema = z.object({
-  source: z.literal("weather"),
-  label: z.string().min(1).max(80),
-  config: WeatherWatchConfigSchema,
-});
+export const CreateWatchInputSchema = z.discriminatedUnion("source", [
+  z.object({
+    source: z.literal("weather"),
+    label: z.string().min(1).max(80),
+    config: WeatherWatchConfigSchema,
+  }),
+  z.object({
+    source: z.literal("music"),
+    label: z.string().min(1).max(80),
+    config: MusicWatchConfigSchema,
+  }),
+]);
 export type CreateWatchInput = z.infer<typeof CreateWatchInputSchema>;
+
+/** How many watches one owner may keep per source (absent = unlimited). */
+export const WATCH_LIMITS: Partial<Record<WatchSource, number>> = {
+  music: 5,
+};
 
 /** A browser's Web Push subscription (PushSubscription.toJSON()). */
 export const WebPushSubscriptionSchema = z.object({

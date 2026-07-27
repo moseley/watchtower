@@ -15,6 +15,11 @@ export interface WatcherMatch {
 export interface AdapterContext {
   now: Date;
   fetch: typeof fetch;
+  /**
+   * When this watch was created. Event-based adapters use it as a baseline so
+   * turning on a watch doesn't alert about everything that already happened.
+   */
+  watchCreatedAt: Date;
 }
 
 /**

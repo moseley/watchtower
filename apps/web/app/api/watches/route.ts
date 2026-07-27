@@ -1,5 +1,5 @@
 import { type Prisma, prisma } from "@watchtower/db";
-import { CreateWatchInputSchema } from "@watchtower/types";
+import { CreateWatchInputSchema, WATCH_LIMITS } from "@watchtower/types";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +42,37 @@ export async function POST(request: Request) {
   }
 
   const { source, label, config } = parsed.data;
+
+  // One watch per artist — re-watching the same one would double every alert.
+  // Checked before the limit so an at-capacity user isn't told to delete
+  // something to make room for a watch that would be rejected anyway.
+  if (source === "music") {
+    const duplicate = await prisma.watch.findFirst({
+      where: {
+        ownerId,
+        source: "music",
+        config: { path: ["artist", "mbid"], equals: config.artist.mbid },
+      },
+    });
+    if (duplicate) {
+      return Response.json(
+        { error: `You're already watching ${config.artist.name}.` },
+        { status: 409 },
+      );
+    }
+  }
+
+  const limit = WATCH_LIMITS[source];
+  if (limit !== undefined) {
+    const existing = await prisma.watch.count({ where: { ownerId, source } });
+    if (existing >= limit) {
+      return Response.json(
+        { error: `You can watch up to ${limit} ${source} items. Delete one to add another.` },
+        { status: 409 },
+      );
+    }
+  }
+
   const watch = await prisma.watch.create({
     data: {
       ownerId,

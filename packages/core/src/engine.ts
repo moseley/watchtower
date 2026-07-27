@@ -55,7 +55,11 @@ export async function runWatches(opts: RunOptions): Promise<RunSummary> {
     summary.watchesChecked++;
     let found: WatcherMatch[] = [];
     try {
-      found = await adapter.evaluate(parsed.data, { now, fetch: fetchImpl });
+      found = await adapter.evaluate(parsed.data, {
+        now,
+        fetch: fetchImpl,
+        watchCreatedAt: watch.createdAt,
+      });
     } catch (err) {
       summary.errors.push(`evaluate failed for watch ${watch.id}: ${(err as Error).message}`);
     }

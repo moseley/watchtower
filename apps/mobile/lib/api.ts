@@ -49,7 +49,25 @@ export interface WatchRow {
   config: {
     location?: { label?: string };
     rule?: { metric?: string; comparator?: string; threshold?: number };
+    artist?: { name?: string; mbid?: string };
+    includeSingles?: boolean;
   };
+}
+
+export interface ArtistHit {
+  mbid: string;
+  name: string;
+  disambiguation?: string;
+  country?: string;
+  type?: string;
+}
+
+/** Search MusicBrainz for an artist or band to watch. */
+export async function searchArtists(query: string): Promise<ArtistHit[]> {
+  const json = await request<{ artists: ArtistHit[] }>(
+    `/api/music/search?q=${encodeURIComponent(query)}`,
+  );
+  return json.artists;
 }
 
 export async function listWatches(ownerId: string): Promise<WatchRow[]> {

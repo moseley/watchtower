@@ -9,6 +9,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -20,12 +21,17 @@ import {
   listWatches,
   registerDevice,
   reverseGeocode,
+  searchArtists,
+  type ArtistHit,
   type WatchRow,
 } from "./lib/api";
 import { registerForPushNotificationsAsync } from "./lib/push";
 
+type Source = "weather" | "music";
 type Metric = "temperature" | "precipitation_probability" | "wind_speed";
 type Comparator = "below" | "above";
+
+const MUSIC_LIMIT = 5;
 
 const METRICS: { key: Metric; label: string }[] = [
   { key: "temperature", label: "Temperature" },
@@ -39,7 +45,9 @@ const METRIC_NAMES: Record<Metric, string> = {
   wind_speed: "wind",
 };
 
-function iconFor(rule?: { metric?: string; comparator?: string }): string {
+function iconFor(w: WatchRow): string {
+  if (w.source === "music") return "🎤";
+  const rule = w.config.rule;
   if (rule?.metric === "temperature") return rule.comparator === "below" ? "❄️" : "☀️";
   if (rule?.metric === "precipitation_probability") return "🌧️";
   if (rule?.metric === "wind_speed") return "💨";
@@ -49,6 +57,12 @@ function iconFor(rule?: { metric?: string; comparator?: string }): string {
 export default function App() {
   const [ownerId, setOwnerId] = useState<string | null>(null);
   const [status, setStatus] = useState("Starting…");
+  const [source, setSource] = useState<Source>("weather");
+  const [watches, setWatches] = useState<WatchRow[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [lastPush, setLastPush] = useState<string | null>(null);
+
+  // weather form
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [locationText, setLocationText] = useState("");
   const [locationEdited, setLocationEdited] = useState(false);
@@ -56,9 +70,15 @@ export default function App() {
   const [metric, setMetric] = useState<Metric>("temperature");
   const [comparator, setComparator] = useState<Comparator>("below");
   const [threshold, setThreshold] = useState("35");
-  const [watches, setWatches] = useState<WatchRow[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [lastPush, setLastPush] = useState<string | null>(null);
+
+  // music form
+  const [artistQuery, setArtistQuery] = useState("");
+  const [artistHits, setArtistHits] = useState<ArtistHit[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [artist, setArtist] = useState<ArtistHit | null>(null);
+  const [includeSingles, setIncludeSingles] = useState(false);
+
+  const musicCount = watches.filter((w) => w.source === "music").length;
 
   useEffect(() => {
     let sub: ReturnType<typeof Notifications.addNotificationReceivedListener> | undefined;
@@ -125,6 +145,21 @@ export default function App() {
     }
   }
 
+  async function onSearchArtists() {
+    const q = artistQuery.trim();
+    if (!q) return;
+    setSearching(true);
+    try {
+      const hits = await searchArtists(q);
+      setArtistHits(hits);
+      if (hits.length === 0) setStatus(`No artists found for "${q}"`);
+    } catch (err) {
+      setStatus(`Search failed: ${(err as Error).message}`);
+    } finally {
+      setSearching(false);
+    }
+  }
+
   function thresholdError(): string | null {
     const value = Number(threshold);
     if (threshold.trim() === "" || !Number.isFinite(value)) return "Enter a number";
@@ -135,47 +170,77 @@ export default function App() {
     return null;
   }
 
+  async function createWeatherWatch(id: string) {
+    let loc: { latitude: number; longitude: number; label: string };
+    if (locationEdited || !coords) {
+      const query = locationText.trim();
+      if (!query) throw new Error("Enter a city or zip code");
+      const hit = await geocode(query);
+      loc = hit;
+      setCoords({ latitude: hit.latitude, longitude: hit.longitude });
+      setLocationText(hit.label);
+      setLocationEdited(false);
+    } else {
+      loc = { ...coords, label: locationText.trim() || "Current location" };
+    }
+
+    const value = Number(threshold);
+    const rule =
+      metric === "temperature"
+        ? { metric, comparator, threshold: value, unit: "F" as const, withinHours: 12 }
+        : metric === "precipitation_probability"
+          ? { metric, comparator: "above" as const, threshold: value, withinHours: 6 }
+          : {
+              metric,
+              comparator: "above" as const,
+              threshold: value,
+              unit: "mph" as const,
+              withinHours: 12,
+            };
+
+    const config = WeatherWatchConfigSchema.parse({
+      location: { latitude: loc.latitude, longitude: loc.longitude, label: loc.label },
+      rule,
+    });
+
+    await createWatch({
+      ownerId: id,
+      source: "weather",
+      label: `${loc.label} · ${METRIC_NAMES[metric]}`,
+      config,
+    });
+  }
+
+  async function createMusicWatch(id: string) {
+    if (!artist) throw new Error("Pick an artist first");
+    await createWatch({
+      ownerId: id,
+      source: "music",
+      label: artist.name,
+      config: {
+        artist: {
+          mbid: artist.mbid,
+          name: artist.name,
+          ...(artist.disambiguation ? { disambiguation: artist.disambiguation } : {}),
+        },
+        includeSingles,
+      },
+    });
+    setArtist(null);
+    setArtistHits([]);
+    setArtistQuery("");
+  }
+
   async function onCreate() {
     if (!ownerId) return;
     setBusy(true);
     try {
-      // Resolve the location: geocode typed input, or reuse GPS coords.
-      let loc: { latitude: number; longitude: number; label: string };
-      if (locationEdited || !coords) {
-        const query = locationText.trim();
-        if (!query) throw new Error("Enter a city or zip code");
-        const hit = await geocode(query);
-        loc = hit;
-        setCoords({ latitude: hit.latitude, longitude: hit.longitude });
-        setLocationText(hit.label);
-        setLocationEdited(false);
-      } else {
-        loc = { ...coords, label: locationText.trim() || "Current location" };
-      }
-
-      const value = Number(threshold);
-      const rule =
-        metric === "temperature"
-          ? { metric, comparator, threshold: value, unit: "F" as const, withinHours: 12 }
-          : metric === "precipitation_probability"
-            ? { metric, comparator: "above" as const, threshold: value, withinHours: 6 }
-            : { metric, comparator: "above" as const, threshold: value, unit: "mph" as const, withinHours: 12 };
-
-      const config = WeatherWatchConfigSchema.parse({
-        location: { latitude: loc.latitude, longitude: loc.longitude, label: loc.label },
-        rule,
-      });
-
-      await createWatch({
-        ownerId,
-        source: "weather",
-        label: `${loc.label} · ${METRIC_NAMES[metric]}`,
-        config,
-      });
+      if (source === "weather") await createWeatherWatch(ownerId);
+      else await createMusicWatch(ownerId);
       setStatus("Watch created ✓");
       await refreshWatches(ownerId);
     } catch (err) {
-      setStatus(`Create failed: ${(err as Error).message}`);
+      setStatus(`${(err as Error).message}`);
     } finally {
       setBusy(false);
     }
@@ -192,13 +257,18 @@ export default function App() {
   }
 
   const thresholdProblem = thresholdError();
+  const musicFull = musicCount >= MUSIC_LIMIT;
   const canCreate =
-    Boolean(ownerId) && !busy && !locating && !thresholdProblem && locationText.trim() !== "";
+    Boolean(ownerId) &&
+    !busy &&
+    (source === "weather"
+      ? !locating && !thresholdProblem && locationText.trim() !== ""
+      : Boolean(artist) && !musicFull);
 
   return (
     <View style={styles.root}>
       <StatusBar style="light" />
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Text style={styles.title}>Watchtower</Text>
         <Text style={styles.subtitle}>{status}</Text>
 
@@ -209,64 +279,176 @@ export default function App() {
         )}
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>New weather watch</Text>
-
-          <Text style={styles.fieldLabel}>Location (city or zip code)</Text>
-          <View style={styles.locationRow}>
-            <TextInput
-              style={[styles.input, styles.locationInput]}
-              value={locationText}
-              onChangeText={(text) => {
-                setLocationText(text);
-                setLocationEdited(true);
-              }}
-              placeholder="e.g. Honolulu or 96815"
-              placeholderTextColor="#475569"
+          <View style={styles.tabRow}>
+            <Tab
+              label="🌤️ Weather"
+              active={source === "weather"}
+              onPress={() => setSource("weather")}
             />
-            <Pressable
-              style={styles.locateButton}
-              onPress={useCurrentLocation}
-              disabled={locating}
-            >
-              {locating ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.locateIcon}>📍</Text>}
-            </Pressable>
-          </View>
-          {coords && !locationEdited && (
-            <Text style={styles.hint}>
-              Using {coords.latitude.toFixed(3)}, {coords.longitude.toFixed(3)}
-            </Text>
-          )}
-          {locationEdited && <Text style={styles.hint}>Will look up this location on create</Text>}
-
-          <Text style={styles.fieldLabel}>Metric</Text>
-          <View style={styles.chipRow}>
-            {METRICS.map((m) => (
-              <Chip key={m.key} label={m.label} active={metric === m.key} onPress={() => setMetric(m.key)} />
-            ))}
+            <Tab label="🎤 Music" active={source === "music"} onPress={() => setSource("music")} />
           </View>
 
-          {metric === "temperature" && (
+          {source === "weather" ? (
             <>
-              <Text style={styles.fieldLabel}>When it goes</Text>
-              <View style={styles.chipRow}>
-                <Chip label="❄️ Below" active={comparator === "below"} onPress={() => setComparator("below")} />
-                <Chip label="☀️ Above" active={comparator === "above"} onPress={() => setComparator("above")} />
+              <Text style={styles.fieldLabel}>Location (city or zip code)</Text>
+              <View style={styles.locationRow}>
+                <TextInput
+                  style={[styles.input, styles.locationInput]}
+                  value={locationText}
+                  onChangeText={(text) => {
+                    setLocationText(text);
+                    setLocationEdited(true);
+                  }}
+                  placeholder="e.g. Honolulu or 96815"
+                  placeholderTextColor="#475569"
+                />
+                <Pressable style={styles.iconButton} onPress={useCurrentLocation} disabled={locating}>
+                  {locating ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Text style={styles.iconButtonText}>📍</Text>
+                  )}
+                </Pressable>
               </View>
+              {coords && !locationEdited && (
+                <Text style={styles.hint}>
+                  Using {coords.latitude.toFixed(3)}, {coords.longitude.toFixed(3)}
+                </Text>
+              )}
+              {locationEdited && (
+                <Text style={styles.hint}>Will look up this location on create</Text>
+              )}
+
+              <Text style={styles.fieldLabel}>Metric</Text>
+              <View style={styles.chipRow}>
+                {METRICS.map((m) => (
+                  <Chip
+                    key={m.key}
+                    label={m.label}
+                    active={metric === m.key}
+                    onPress={() => setMetric(m.key)}
+                  />
+                ))}
+              </View>
+
+              {metric === "temperature" && (
+                <>
+                  <Text style={styles.fieldLabel}>When it goes</Text>
+                  <View style={styles.chipRow}>
+                    <Chip
+                      label="❄️ Below"
+                      active={comparator === "below"}
+                      onPress={() => setComparator("below")}
+                    />
+                    <Chip
+                      label="☀️ Above"
+                      active={comparator === "above"}
+                      onPress={() => setComparator("above")}
+                    />
+                  </View>
+                </>
+              )}
+
+              <Text style={styles.fieldLabel}>
+                Threshold{" "}
+                {metric === "temperature" ? "(°F)" : metric === "wind_speed" ? "(mph)" : "(0–100 %)"}
+              </Text>
+              <TextInput
+                style={[styles.input, thresholdProblem ? styles.inputError : null]}
+                value={threshold}
+                onChangeText={setThreshold}
+                keyboardType="numeric"
+                placeholder="35"
+                placeholderTextColor="#475569"
+              />
+              {thresholdProblem && <Text style={styles.errorHint}>{thresholdProblem}</Text>}
+            </>
+          ) : (
+            <>
+              <View style={styles.labelRow}>
+                <Text style={styles.fieldLabel}>Search for an artist or band</Text>
+                <Text style={styles.counter}>
+                  {musicCount} / {MUSIC_LIMIT} watched
+                </Text>
+              </View>
+              <View style={styles.locationRow}>
+                <TextInput
+                  style={[styles.input, styles.locationInput]}
+                  value={artistQuery}
+                  onChangeText={setArtistQuery}
+                  onSubmitEditing={onSearchArtists}
+                  returnKeyType="search"
+                  placeholder="e.g. Radiohead"
+                  placeholderTextColor="#475569"
+                />
+                <Pressable
+                  style={styles.iconButton}
+                  onPress={onSearchArtists}
+                  disabled={searching || !artistQuery.trim()}
+                >
+                  {searching ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Text style={styles.iconButtonText}>🔍</Text>
+                  )}
+                </Pressable>
+              </View>
+
+              {artist ? (
+                <View style={styles.selectedArtist}>
+                  <Text style={styles.watchIcon}>🎤</Text>
+                  <View style={styles.watchBody}>
+                    <Text style={styles.watchLabel}>{artist.name}</Text>
+                    {artist.disambiguation && (
+                      <Text style={styles.watchMeta}>{artist.disambiguation}</Text>
+                    )}
+                  </View>
+                  <Pressable onPress={() => setArtist(null)}>
+                    <Text style={styles.changeLink}>change</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                artistHits.map((a) => (
+                  <Pressable
+                    key={a.mbid}
+                    style={styles.hitRow}
+                    onPress={() => {
+                      setArtist(a);
+                      setArtistHits([]);
+                    }}
+                  >
+                    <View style={styles.watchBody}>
+                      <Text style={styles.hitName}>{a.name}</Text>
+                      <Text style={styles.watchMeta}>
+                        {[a.disambiguation, a.type, a.country].filter(Boolean).join(" · ") ||
+                          "artist"}
+                      </Text>
+                    </View>
+                    <Text style={styles.watchMeta}>select</Text>
+                  </Pressable>
+                ))
+              )}
+
+              <View style={styles.switchRow}>
+                <Switch
+                  value={includeSingles}
+                  onValueChange={setIncludeSingles}
+                  trackColor={{ true: "#2563EB", false: "#334155" }}
+                  thumbColor="#fff"
+                />
+                <Text style={styles.switchLabel}>Include singles</Text>
+              </View>
+              <Text style={styles.hint}>
+                Albums and EPs are always included. Singles can be frequent for busy artists.
+              </Text>
+
+              {musicFull && (
+                <Text style={styles.warnHint}>
+                  You&apos;re watching {MUSIC_LIMIT} artists — delete one to add another.
+                </Text>
+              )}
             </>
           )}
-
-          <Text style={styles.fieldLabel}>
-            Threshold {metric === "temperature" ? "(°F)" : metric === "wind_speed" ? "(mph)" : "(0–100 %)"}
-          </Text>
-          <TextInput
-            style={[styles.input, thresholdProblem ? styles.inputError : null]}
-            value={threshold}
-            onChangeText={setThreshold}
-            keyboardType="numeric"
-            placeholder="35"
-            placeholderTextColor="#475569"
-          />
-          {thresholdProblem && <Text style={styles.errorHint}>{thresholdProblem}</Text>}
 
           <Pressable
             style={[styles.button, !canCreate && styles.buttonDisabled]}
@@ -287,12 +469,19 @@ export default function App() {
         ) : (
           watches.map((w) => (
             <View key={w.id} style={styles.watchRow}>
-              <Text style={styles.watchIcon}>{iconFor(w.config.rule)}</Text>
+              <Text style={styles.watchIcon}>{iconFor(w)}</Text>
               <View style={styles.watchBody}>
-                <Text style={styles.watchLabel}>{w.config.location?.label ?? w.label}</Text>
+                <Text style={styles.watchLabel}>
+                  {w.source === "music"
+                    ? (w.config.artist?.name ?? w.label)
+                    : (w.config.location?.label ?? w.label)}
+                </Text>
                 <Text style={styles.watchMeta}>
-                  {w.config.rule?.metric?.replace(/_/g, " ")} {w.config.rule?.comparator}{" "}
-                  {w.config.rule?.threshold}
+                  {w.source === "music"
+                    ? w.config.includeSingles
+                      ? "new albums, EPs & singles"
+                      : "new albums & EPs"
+                    : `${w.config.rule?.metric?.replace(/_/g, " ")} ${w.config.rule?.comparator} ${w.config.rule?.threshold}`}
                 </Text>
               </View>
               <Pressable style={styles.deleteButton} onPress={() => onDelete(w.id)}>
@@ -303,6 +492,14 @@ export default function App() {
         )}
       </ScrollView>
     </View>
+  );
+}
+
+function Tab({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable style={[styles.tab, active && styles.tabActive]} onPress={onPress}>
+      <Text style={[styles.tabText, active && styles.tabTextActive]}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -319,15 +516,16 @@ const styles = StyleSheet.create({
   content: { padding: 20, paddingTop: 64, paddingBottom: 48 },
   title: { fontSize: 32, fontWeight: "800", color: "#fff" },
   subtitle: { fontSize: 14, color: "#94A3B8", marginTop: 4, marginBottom: 16 },
-  pushBanner: {
-    backgroundColor: "#1D4ED8",
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 16,
-  },
+  pushBanner: { backgroundColor: "#1D4ED8", borderRadius: 12, padding: 14, marginBottom: 16 },
   pushBannerText: { color: "#fff", fontSize: 15, fontWeight: "600" },
   card: { backgroundColor: "#1E293B", borderRadius: 16, padding: 18 },
-  cardTitle: { fontSize: 18, fontWeight: "700", color: "#fff", marginBottom: 12 },
+  tabRow: { flexDirection: "row", gap: 8, marginBottom: 4 },
+  tab: { flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: "center" },
+  tabActive: { backgroundColor: "#334155" },
+  tabText: { color: "#64748B", fontWeight: "700", fontSize: 14 },
+  tabTextActive: { color: "#fff" },
+  labelRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" },
+  counter: { fontSize: 12, color: "#64748B", marginTop: 12, marginBottom: 6 },
   fieldLabel: { fontSize: 13, color: "#94A3B8", marginTop: 12, marginBottom: 6 },
   input: {
     backgroundColor: "#0F172A",
@@ -340,14 +538,14 @@ const styles = StyleSheet.create({
   inputError: { borderWidth: 1, borderColor: "#F87171" },
   locationRow: { flexDirection: "row", gap: 8, alignItems: "center" },
   locationInput: { flex: 1 },
-  locateButton: {
+  iconButton: {
     backgroundColor: "#334155",
     borderRadius: 10,
     padding: 12,
     alignItems: "center",
     justifyContent: "center",
   },
-  locateIcon: { fontSize: 18 },
+  iconButtonText: { fontSize: 18 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: {
     paddingHorizontal: 14,
@@ -361,7 +559,32 @@ const styles = StyleSheet.create({
   chipText: { color: "#94A3B8", fontWeight: "600" },
   chipTextActive: { color: "#fff" },
   hint: { color: "#64748B", fontSize: 12, marginTop: 8 },
+  warnHint: { color: "#FBBF24", fontSize: 12, marginTop: 10 },
   errorHint: { color: "#F87171", fontSize: 12, marginTop: 6 },
+  selectedArtist: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#2563EB",
+    backgroundColor: "#172554",
+  },
+  hitRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 8,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: "#0F172A",
+  },
+  hitName: { color: "#fff", fontSize: 14, fontWeight: "600" },
+  changeLink: { color: "#94A3B8", fontSize: 13 },
+  switchRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 16 },
+  switchLabel: { color: "#E2E8F0", fontSize: 15 },
   button: {
     backgroundColor: "#2563EB",
     borderRadius: 12,

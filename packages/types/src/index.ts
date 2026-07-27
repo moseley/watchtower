@@ -14,4 +14,5 @@ export const HealthSchema = z.object({
 export type Health = z.infer<typeof HealthSchema>;
 
 export * from "./weather";
+export * from "./music";
 export * from "./watch";

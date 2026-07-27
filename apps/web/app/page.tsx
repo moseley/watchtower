@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+type Source = "weather" | "music";
 type Metric = "temperature" | "precipitation_probability" | "wind_speed";
 type Comparator = "below" | "above";
 
@@ -12,10 +13,21 @@ interface WatchRow {
   config: {
     location?: { label?: string };
     rule?: { metric?: string; comparator?: string; threshold?: number };
+    artist?: { name?: string; mbid?: string };
+    includeSingles?: boolean;
   };
 }
 
+interface ArtistHit {
+  mbid: string;
+  name: string;
+  disambiguation?: string;
+  country?: string;
+  type?: string;
+}
+
 const OWNER_KEY = "watchtower.ownerId";
+const MUSIC_LIMIT = 5;
 
 const METRICS: { key: Metric; label: string }[] = [
   { key: "temperature", label: "Temperature" },
@@ -29,7 +41,9 @@ const METRIC_NAMES: Record<Metric, string> = {
   wind_speed: "wind",
 };
 
-function iconFor(rule?: { metric?: string; comparator?: string }): string {
+function iconFor(w: WatchRow): string {
+  if (w.source === "music") return "🎤";
+  const rule = w.config.rule;
   if (rule?.metric === "temperature") return rule.comparator === "below" ? "❄️" : "☀️";
   if (rule?.metric === "precipitation_probability") return "🌧️";
   if (rule?.metric === "wind_speed") return "💨";
@@ -62,6 +76,11 @@ export default function Home() {
   const [ownerId, setOwnerId] = useState<string | null>(null);
   const [status, setStatus] = useState("");
   const [supported, setSupported] = useState(true);
+  const [source, setSource] = useState<Source>("weather");
+  const [watches, setWatches] = useState<WatchRow[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  // weather form
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [locationText, setLocationText] = useState("");
   const [locationEdited, setLocationEdited] = useState(false);
@@ -69,8 +88,15 @@ export default function Home() {
   const [metric, setMetric] = useState<Metric>("temperature");
   const [comparator, setComparator] = useState<Comparator>("below");
   const [threshold, setThreshold] = useState("35");
-  const [watches, setWatches] = useState<WatchRow[]>([]);
-  const [busy, setBusy] = useState(false);
+
+  // music form
+  const [artistQuery, setArtistQuery] = useState("");
+  const [artistHits, setArtistHits] = useState<ArtistHit[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [artist, setArtist] = useState<ArtistHit | null>(null);
+  const [includeSingles, setIncludeSingles] = useState(false);
+
+  const musicCount = watches.filter((w) => w.source === "music").length;
 
   const refreshWatches = useCallback(async (id: string) => {
     try {
@@ -150,6 +176,24 @@ export default function Home() {
     );
   }
 
+  async function searchArtists() {
+    const q = artistQuery.trim();
+    if (!q) return;
+    setSearching(true);
+    setStatus("");
+    try {
+      const json = await api<{ artists: ArtistHit[] }>(
+        `/api/music/search?q=${encodeURIComponent(q)}`,
+      );
+      setArtistHits(json.artists);
+      if (json.artists.length === 0) setStatus(`No artists found for "${q}"`);
+    } catch (err) {
+      setStatus(`Search failed: ${(err as Error).message}`);
+    } finally {
+      setSearching(false);
+    }
+  }
+
   function thresholdError(): string | null {
     const value = Number(threshold);
     if (threshold.trim() === "" || !Number.isFinite(value)) return "Enter a number";
@@ -160,49 +204,78 @@ export default function Home() {
     return null;
   }
 
+  async function createWeatherWatch() {
+    let loc: { latitude: number; longitude: number; label: string };
+    if (locationEdited || !coords) {
+      const query = locationText.trim();
+      if (!query) throw new Error("Enter a city or zip code");
+      loc = await api<{ latitude: number; longitude: number; label: string }>(
+        `/api/geocode?q=${encodeURIComponent(query)}`,
+      );
+      setCoords({ latitude: loc.latitude, longitude: loc.longitude });
+      setLocationText(loc.label);
+      setLocationEdited(false);
+    } else {
+      loc = { ...coords, label: locationText.trim() || "Current location" };
+    }
+
+    const value = Number(threshold);
+    const rule =
+      metric === "temperature"
+        ? { metric, comparator, threshold: value, unit: "F", withinHours: 12 }
+        : metric === "precipitation_probability"
+          ? { metric, comparator: "above", threshold: value, withinHours: 6 }
+          : { metric, comparator: "above", threshold: value, unit: "mph", withinHours: 12 };
+
+    await api("/api/watches", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ownerId,
+        source: "weather",
+        label: `${loc.label} · ${METRIC_NAMES[metric]}`,
+        config: {
+          location: { latitude: loc.latitude, longitude: loc.longitude, label: loc.label },
+          rule,
+        },
+      }),
+    });
+  }
+
+  async function createMusicWatch() {
+    if (!artist) throw new Error("Pick an artist first");
+    await api("/api/watches", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ownerId,
+        source: "music",
+        label: artist.name,
+        config: {
+          artist: {
+            mbid: artist.mbid,
+            name: artist.name,
+            ...(artist.disambiguation ? { disambiguation: artist.disambiguation } : {}),
+          },
+          includeSingles,
+        },
+      }),
+    });
+    setArtist(null);
+    setArtistHits([]);
+    setArtistQuery("");
+  }
+
   async function onCreate() {
     if (!ownerId) return;
     setBusy(true);
     try {
-      let loc: { latitude: number; longitude: number; label: string };
-      if (locationEdited || !coords) {
-        const query = locationText.trim();
-        if (!query) throw new Error("Enter a city or zip code");
-        loc = await api<{ latitude: number; longitude: number; label: string }>(
-          `/api/geocode?q=${encodeURIComponent(query)}`,
-        );
-        setCoords({ latitude: loc.latitude, longitude: loc.longitude });
-        setLocationText(loc.label);
-        setLocationEdited(false);
-      } else {
-        loc = { ...coords, label: locationText.trim() || "Current location" };
-      }
-
-      const value = Number(threshold);
-      const rule =
-        metric === "temperature"
-          ? { metric, comparator, threshold: value, unit: "F", withinHours: 12 }
-          : metric === "precipitation_probability"
-            ? { metric, comparator: "above", threshold: value, withinHours: 6 }
-            : { metric, comparator: "above", threshold: value, unit: "mph", withinHours: 12 };
-
-      await api("/api/watches", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ownerId,
-          source: "weather",
-          label: `${loc.label} · ${METRIC_NAMES[metric]}`,
-          config: {
-            location: { latitude: loc.latitude, longitude: loc.longitude, label: loc.label },
-            rule,
-          },
-        }),
-      });
+      if (source === "weather") await createWeatherWatch();
+      else await createMusicWatch();
       setStatus("Watch created ✓");
       await refreshWatches(ownerId);
     } catch (err) {
-      setStatus(`Create failed: ${(err as Error).message}`);
+      setStatus(`${(err as Error).message}`);
     } finally {
       setBusy(false);
     }
@@ -221,8 +294,13 @@ export default function Home() {
   }
 
   const thresholdProblem = thresholdError();
+  const musicFull = musicCount >= MUSIC_LIMIT;
   const canCreate =
-    Boolean(ownerId) && !busy && !locating && !thresholdProblem && locationText.trim() !== "";
+    Boolean(ownerId) &&
+    !busy &&
+    (source === "weather"
+      ? !locating && !thresholdProblem && locationText.trim() !== ""
+      : Boolean(artist) && !musicFull);
 
   const inputClass =
     "w-full rounded-lg bg-slate-950 px-4 py-3 text-white placeholder-slate-600 outline-none ring-blue-600 focus:ring-2";
@@ -261,81 +339,188 @@ export default function Home() {
         )}
 
         <div className={`mt-6 rounded-2xl bg-slate-900 p-5 ${ownerId ? "" : "opacity-50"}`}>
-          <h2 className="text-lg font-bold">New weather watch</h2>
-
-          <label className="mt-4 block text-xs text-slate-400">Location (city or zip code)</label>
-          <div className="mt-1.5 flex gap-2">
-            <input
-              className={inputClass}
-              value={locationText}
-              onChange={(e) => {
-                setLocationText(e.target.value);
-                setLocationEdited(true);
-              }}
-              placeholder="e.g. Honolulu or 96815"
-              disabled={!ownerId}
-            />
-            <button
-              className="rounded-lg bg-slate-700 px-4 hover:bg-slate-600 disabled:opacity-50"
-              onClick={useCurrentLocation}
-              disabled={!ownerId || locating}
-              title="Use current location"
-            >
-              {locating ? "…" : "📍"}
-            </button>
-          </div>
-          {coords && !locationEdited && (
-            <p className="mt-1.5 text-xs text-slate-500">
-              Using {coords.latitude.toFixed(3)}, {coords.longitude.toFixed(3)}
-            </p>
-          )}
-          {locationEdited && (
-            <p className="mt-1.5 text-xs text-slate-500">Will look up this location on create</p>
-          )}
-
-          <label className="mt-4 block text-xs text-slate-400">Metric</label>
-          <div className="mt-1.5 flex flex-wrap gap-2">
-            {METRICS.map((m) => (
-              <Chip
-                key={m.key}
-                label={m.label}
-                active={metric === m.key}
-                onClick={() => setMetric(m.key)}
-              />
-            ))}
+          <div className="flex gap-2">
+            <Tab label="🌤️ Weather" active={source === "weather"} onClick={() => setSource("weather")} />
+            <Tab label="🎤 Music" active={source === "music"} onClick={() => setSource("music")} />
           </div>
 
-          {metric === "temperature" && (
+          {source === "weather" ? (
             <>
-              <label className="mt-4 block text-xs text-slate-400">When it goes</label>
+              <label className="mt-5 block text-xs text-slate-400">
+                Location (city or zip code)
+              </label>
               <div className="mt-1.5 flex gap-2">
-                <Chip
-                  label="❄️ Below"
-                  active={comparator === "below"}
-                  onClick={() => setComparator("below")}
+                <input
+                  className={inputClass}
+                  value={locationText}
+                  onChange={(e) => {
+                    setLocationText(e.target.value);
+                    setLocationEdited(true);
+                  }}
+                  placeholder="e.g. Honolulu or 96815"
+                  disabled={!ownerId}
                 />
-                <Chip
-                  label="☀️ Above"
-                  active={comparator === "above"}
-                  onClick={() => setComparator("above")}
-                />
+                <button
+                  className="rounded-lg bg-slate-700 px-4 hover:bg-slate-600 disabled:opacity-50"
+                  onClick={useCurrentLocation}
+                  disabled={!ownerId || locating}
+                  title="Use current location"
+                >
+                  {locating ? "…" : "📍"}
+                </button>
               </div>
+              {coords && !locationEdited && (
+                <p className="mt-1.5 text-xs text-slate-500">
+                  Using {coords.latitude.toFixed(3)}, {coords.longitude.toFixed(3)}
+                </p>
+              )}
+              {locationEdited && (
+                <p className="mt-1.5 text-xs text-slate-500">
+                  Will look up this location on create
+                </p>
+              )}
+
+              <label className="mt-4 block text-xs text-slate-400">Metric</label>
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                {METRICS.map((m) => (
+                  <Chip
+                    key={m.key}
+                    label={m.label}
+                    active={metric === m.key}
+                    onClick={() => setMetric(m.key)}
+                  />
+                ))}
+              </div>
+
+              {metric === "temperature" && (
+                <>
+                  <label className="mt-4 block text-xs text-slate-400">When it goes</label>
+                  <div className="mt-1.5 flex gap-2">
+                    <Chip
+                      label="❄️ Below"
+                      active={comparator === "below"}
+                      onClick={() => setComparator("below")}
+                    />
+                    <Chip
+                      label="☀️ Above"
+                      active={comparator === "above"}
+                      onClick={() => setComparator("above")}
+                    />
+                  </div>
+                </>
+              )}
+
+              <label className="mt-4 block text-xs text-slate-400">
+                Threshold{" "}
+                {metric === "temperature"
+                  ? "(°F)"
+                  : metric === "wind_speed"
+                    ? "(mph)"
+                    : "(0–100 %)"}
+              </label>
+              <input
+                className={`${inputClass} mt-1.5 ${thresholdProblem ? "ring-2 ring-red-400" : ""}`}
+                value={threshold}
+                onChange={(e) => setThreshold(e.target.value)}
+                inputMode="numeric"
+                placeholder="35"
+                disabled={!ownerId}
+              />
+              {thresholdProblem && (
+                <p className="mt-1.5 text-xs text-red-400">{thresholdProblem}</p>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="mt-5 flex items-baseline justify-between">
+                <label className="block text-xs text-slate-400">Search for an artist or band</label>
+                <span className="text-xs text-slate-500">
+                  {musicCount} / {MUSIC_LIMIT} watched
+                </span>
+              </div>
+              <div className="mt-1.5 flex gap-2">
+                <input
+                  className={inputClass}
+                  value={artistQuery}
+                  onChange={(e) => setArtistQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void searchArtists();
+                  }}
+                  placeholder="e.g. Radiohead"
+                  disabled={!ownerId}
+                />
+                <button
+                  className="rounded-lg bg-slate-700 px-4 hover:bg-slate-600 disabled:opacity-50"
+                  onClick={searchArtists}
+                  disabled={!ownerId || searching || !artistQuery.trim()}
+                >
+                  {searching ? "…" : "🔍"}
+                </button>
+              </div>
+
+              {artist ? (
+                <div className="mt-3 flex items-center gap-3 rounded-xl border border-blue-600 bg-blue-950/40 p-3">
+                  <span className="text-xl">🎤</span>
+                  <div className="flex-1">
+                    <p className="font-semibold">{artist.name}</p>
+                    {artist.disambiguation && (
+                      <p className="text-xs text-slate-400">{artist.disambiguation}</p>
+                    )}
+                  </div>
+                  <button
+                    className="rounded-lg px-2 py-1 text-sm text-slate-400 hover:bg-slate-800"
+                    onClick={() => setArtist(null)}
+                  >
+                    change
+                  </button>
+                </div>
+              ) : (
+                artistHits.length > 0 && (
+                  <div className="mt-3 space-y-1.5">
+                    {artistHits.map((a) => (
+                      <button
+                        key={a.mbid}
+                        className="flex w-full items-center gap-3 rounded-lg bg-slate-950 p-3 text-left hover:bg-slate-800"
+                        onClick={() => {
+                          setArtist(a);
+                          setArtistHits([]);
+                        }}
+                      >
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold">{a.name}</p>
+                          <p className="text-xs text-slate-500">
+                            {[a.disambiguation, a.type, a.country].filter(Boolean).join(" · ") ||
+                              "artist"}
+                          </p>
+                        </div>
+                        <span className="text-xs text-slate-500">select</span>
+                      </button>
+                    ))}
+                  </div>
+                )
+              )}
+
+              <label className="mt-4 flex items-center gap-2.5 text-sm text-slate-300">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-blue-600"
+                  checked={includeSingles}
+                  onChange={(e) => setIncludeSingles(e.target.checked)}
+                  disabled={!ownerId}
+                />
+                Include singles
+              </label>
+              <p className="mt-1 text-xs text-slate-500">
+                Albums and EPs are always included. Singles can be frequent for busy artists.
+              </p>
+
+              {musicFull && (
+                <p className="mt-3 text-xs text-amber-400">
+                  You&apos;re watching {MUSIC_LIMIT} artists — delete one to add another.
+                </p>
+              )}
             </>
           )}
-
-          <label className="mt-4 block text-xs text-slate-400">
-            Threshold{" "}
-            {metric === "temperature" ? "(°F)" : metric === "wind_speed" ? "(mph)" : "(0–100 %)"}
-          </label>
-          <input
-            className={`${inputClass} mt-1.5 ${thresholdProblem ? "ring-2 ring-red-400" : ""}`}
-            value={threshold}
-            onChange={(e) => setThreshold(e.target.value)}
-            inputMode="numeric"
-            placeholder="35"
-            disabled={!ownerId}
-          />
-          {thresholdProblem && <p className="mt-1.5 text-xs text-red-400">{thresholdProblem}</p>}
 
           <button
             className="mt-5 w-full rounded-xl bg-blue-600 py-3.5 font-bold hover:bg-blue-500 disabled:bg-slate-700"
@@ -353,12 +538,19 @@ export default function Home() {
           ) : (
             watches.map((w) => (
               <div key={w.id} className="flex items-center gap-3 rounded-xl bg-slate-900 p-4">
-                <span className="text-xl">{iconFor(w.config.rule)}</span>
+                <span className="text-xl">{iconFor(w)}</span>
                 <div className="flex-1">
-                  <p className="font-semibold">{w.config.location?.label ?? w.label}</p>
+                  <p className="font-semibold">
+                    {w.source === "music"
+                      ? (w.config.artist?.name ?? w.label)
+                      : (w.config.location?.label ?? w.label)}
+                  </p>
                   <p className="text-sm text-slate-400">
-                    {w.config.rule?.metric?.replace(/_/g, " ")} {w.config.rule?.comparator}{" "}
-                    {w.config.rule?.threshold}
+                    {w.source === "music"
+                      ? w.config.includeSingles
+                        ? "new albums, EPs & singles"
+                        : "new albums & EPs"
+                      : `${w.config.rule?.metric?.replace(/_/g, " ")} ${w.config.rule?.comparator} ${w.config.rule?.threshold}`}
                   </p>
                 </div>
                 <button
@@ -379,6 +571,27 @@ export default function Home() {
         </p>
       </div>
     </main>
+  );
+}
+
+function Tab({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={`flex-1 rounded-lg py-2.5 text-sm font-bold ${
+        active ? "bg-slate-800 text-white" : "text-slate-500 hover:text-slate-300"
+      }`}
+      onClick={onClick}
+    >
+      {label}
+    </button>
   );
 }
 
