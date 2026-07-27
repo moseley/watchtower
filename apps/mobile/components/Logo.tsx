@@ -23,7 +23,8 @@ export function Logo({ size = 56 }: { size?: number }) {
       <Path d="M50 17 L64 8 V26 Z" fill="url(#wtBeamR)" />
 
       <Path d="M24 31 H40 L47 57 H17 Z" fill="#E2E8F0" />
-      <Path d="M21.6 40 H42.4 L44 46 H20 Z" fill="#2563EB" />
+      <Path d="M22.65 36 H41.35 L42.69 41 H21.31 Z" fill="#2563EB" />
+      <Path d="M19.69 47 H44.31 L45.65 52 H18.35 Z" fill="#2563EB" />
       <Rect x="12" y="56" width="40" height="6" rx="2.5" fill="#CBD5E1" />
 
       <Rect x="18" y="26" width="28" height="5.5" rx="2.5" fill="#CBD5E1" />
@@ -31,10 +32,10 @@ export function Logo({ size = 56 }: { size?: number }) {
       <Rect x="27" y="12" width="10" height="9" rx="2" fill="#CBD5E1" />
       <Circle cx="23" cy="17" r="8.5" fill="#E2E8F0" />
       <Circle cx="41" cy="17" r="8.5" fill="#E2E8F0" />
-      <Circle cx="23" cy="17" r="4.2" fill="#2563EB" />
-      <Circle cx="41" cy="17" r="4.2" fill="#2563EB" />
-      <Circle cx="21.6" cy="15.6" r="1.5" fill="#BFDBFE" />
-      <Circle cx="39.6" cy="15.6" r="1.5" fill="#BFDBFE" />
+      <Circle cx="23" cy="17" r="5" fill="#2563EB" />
+      <Circle cx="41" cy="17" r="5" fill="#2563EB" />
+      <Circle cx="23" cy="17" r="2" fill="#BFDBFE" />
+      <Circle cx="41" cy="17" r="2" fill="#BFDBFE" />
     </Svg>
   );
 }

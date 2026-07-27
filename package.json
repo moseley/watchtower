@@ -15,6 +15,7 @@
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
+    "sharp": "^0.35.3",
     "turbo": "^2",
     "typescript": "^5"
   }
