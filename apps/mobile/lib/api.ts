@@ -63,9 +63,13 @@ export interface ArtistHit {
 }
 
 /** Search MusicBrainz for an artist or band to watch. */
-export async function searchArtists(query: string): Promise<ArtistHit[]> {
+export async function searchArtists(
+  query: string,
+  signal?: AbortSignal,
+): Promise<ArtistHit[]> {
   const json = await request<{ artists: ArtistHit[] }>(
     `/api/music/search?q=${encodeURIComponent(query)}`,
+    signal ? { signal } : undefined,
   );
   return json.artists;
 }

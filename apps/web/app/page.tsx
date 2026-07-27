@@ -93,6 +93,7 @@ export default function Home() {
   const [artistQuery, setArtistQuery] = useState("");
   const [artistHits, setArtistHits] = useState<ArtistHit[]>([]);
   const [searching, setSearching] = useState(false);
+  const [noResults, setNoResults] = useState(false);
   const [artist, setArtist] = useState<ArtistHit | null>(null);
   const [includeSingles, setIncludeSingles] = useState(false);
 
@@ -176,23 +177,42 @@ export default function Home() {
     );
   }
 
-  async function searchArtists() {
+  // Search as you type. Debounced so a burst of keystrokes makes one request,
+  // and the previous request is aborted on every change so a slow early
+  // response can never overwrite the results for what's now in the box.
+  useEffect(() => {
     const q = artistQuery.trim();
-    if (!q) return;
-    setSearching(true);
-    setStatus("");
-    try {
-      const json = await api<{ artists: ArtistHit[] }>(
-        `/api/music/search?q=${encodeURIComponent(q)}`,
-      );
-      setArtistHits(json.artists);
-      if (json.artists.length === 0) setStatus(`No artists found for "${q}"`);
-    } catch (err) {
-      setStatus(`Search failed: ${(err as Error).message}`);
-    } finally {
+    if (source !== "music" || artist || q.length < 2) {
+      setArtistHits([]);
+      setNoResults(false);
       setSearching(false);
+      return;
     }
-  }
+
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const json = await api<{ artists: ArtistHit[] }>(
+          `/api/music/search?q=${encodeURIComponent(q)}`,
+          { signal: controller.signal },
+        );
+        setArtistHits(json.artists);
+        setNoResults(json.artists.length === 0);
+      } catch (err) {
+        if ((err as Error).name === "AbortError") return; // superseded
+        setArtistHits([]);
+        setStatus(`Search failed: ${(err as Error).message}`);
+      } finally {
+        if (!controller.signal.aborted) setSearching(false);
+      }
+    }, 350);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [artistQuery, source, artist]);
 
   function thresholdError(): string | null {
     const value = Number(threshold);
@@ -438,25 +458,33 @@ export default function Home() {
                   {musicCount} / {MUSIC_LIMIT} watched
                 </span>
               </div>
-              <div className="mt-1.5 flex gap-2">
+              <div className="relative mt-1.5">
                 <input
-                  className={inputClass}
+                  className={`${inputClass} pr-11`}
                   value={artistQuery}
                   onChange={(e) => setArtistQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void searchArtists();
-                  }}
-                  placeholder="e.g. Radiohead"
+                  placeholder="Start typing a name…"
+                  autoComplete="off"
                   disabled={!ownerId}
                 />
-                <button
-                  className="rounded-lg bg-slate-700 px-4 hover:bg-slate-600 disabled:opacity-50"
-                  onClick={searchArtists}
-                  disabled={!ownerId || searching || !artistQuery.trim()}
+                <span
+                  className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500"
+                  aria-hidden="true"
                 >
-                  {searching ? "…" : "🔍"}
-                </button>
+                  {searching ? (
+                    <span className="block h-4 w-4 animate-spin rounded-full border-2 border-slate-700 border-t-blue-400 motion-reduce:animate-none" />
+                  ) : (
+                    "🔍"
+                  )}
+                </span>
               </div>
+              <p className="sr-only" role="status" aria-live="polite">
+                {searching
+                  ? "Searching"
+                  : artistHits.length > 0
+                    ? `${artistHits.length} artists found`
+                    : ""}
+              </p>
 
               {artist ? (
                 <div className="mt-3 flex items-center gap-3 rounded-xl border border-blue-600 bg-blue-950/40 p-3">
@@ -475,7 +503,13 @@ export default function Home() {
                   </button>
                 </div>
               ) : (
-                artistHits.length > 0 && (
+                artistHits.length === 0 ? (
+                  noResults && (
+                    <p className="mt-3 text-sm text-slate-500">
+                      No artists found for &ldquo;{artistQuery.trim()}&rdquo;.
+                    </p>
+                  )
+                ) : (
                   <div className="mt-3 space-y-1.5">
                     {artistHits.map((a) => (
                       <button

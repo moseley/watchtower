@@ -75,6 +75,7 @@ export default function App() {
   const [artistQuery, setArtistQuery] = useState("");
   const [artistHits, setArtistHits] = useState<ArtistHit[]>([]);
   const [searching, setSearching] = useState(false);
+  const [noResults, setNoResults] = useState(false);
   const [artist, setArtist] = useState<ArtistHit | null>(null);
   const [includeSingles, setIncludeSingles] = useState(false);
 
@@ -145,20 +146,39 @@ export default function App() {
     }
   }
 
-  async function onSearchArtists() {
+  // Search as you type. Debounced so a burst of keystrokes makes one request,
+  // and the previous request is aborted on every change so a slow early
+  // response can never overwrite the results for what's now in the box.
+  useEffect(() => {
     const q = artistQuery.trim();
-    if (!q) return;
-    setSearching(true);
-    try {
-      const hits = await searchArtists(q);
-      setArtistHits(hits);
-      if (hits.length === 0) setStatus(`No artists found for "${q}"`);
-    } catch (err) {
-      setStatus(`Search failed: ${(err as Error).message}`);
-    } finally {
+    if (source !== "music" || artist || q.length < 2) {
+      setArtistHits([]);
+      setNoResults(false);
       setSearching(false);
+      return;
     }
-  }
+
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const hits = await searchArtists(q, controller.signal);
+        setArtistHits(hits);
+        setNoResults(hits.length === 0);
+      } catch (err) {
+        if ((err as Error).name === "AbortError") return; // superseded
+        setArtistHits([]);
+        setStatus(`Search failed: ${(err as Error).message}`);
+      } finally {
+        if (!controller.signal.aborted) setSearching(false);
+      }
+    }, 350);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [artistQuery, source, artist]);
 
   function thresholdError(): string | null {
     const value = Number(threshold);
@@ -371,28 +391,24 @@ export default function App() {
                   {musicCount} / {MUSIC_LIMIT} watched
                 </Text>
               </View>
-              <View style={styles.locationRow}>
+              <View style={styles.searchWrap}>
                 <TextInput
-                  style={[styles.input, styles.locationInput]}
+                  style={[styles.input, styles.searchInput]}
                   value={artistQuery}
                   onChangeText={setArtistQuery}
-                  onSubmitEditing={onSearchArtists}
+                  autoCorrect={false}
+                  autoCapitalize="words"
                   returnKeyType="search"
-                  placeholder="e.g. Radiohead"
+                  placeholder="Start typing a name…"
                   placeholderTextColor="#475569"
                 />
-                <Pressable
-                  style={styles.iconButton}
-                  onPress={onSearchArtists}
-                  disabled={searching || !artistQuery.trim()}
-                >
-                  {searching ? (
-                    <ActivityIndicator color="#fff" size="small" />
-                  ) : (
-                    <Text style={styles.iconButtonText}>🔍</Text>
-                  )}
-                </Pressable>
+                {searching && (
+                  <ActivityIndicator style={styles.searchSpinner} color="#60A5FA" size="small" />
+                )}
               </View>
+              {noResults && !artist && (
+                <Text style={styles.hint}>No artists found for &ldquo;{artistQuery.trim()}&rdquo;.</Text>
+              )}
 
               {artist ? (
                 <View style={styles.selectedArtist}>
@@ -538,6 +554,9 @@ const styles = StyleSheet.create({
   inputError: { borderWidth: 1, borderColor: "#F87171" },
   locationRow: { flexDirection: "row", gap: 8, alignItems: "center" },
   locationInput: { flex: 1 },
+  searchWrap: { position: "relative", justifyContent: "center" },
+  searchInput: { paddingRight: 44 },
+  searchSpinner: { position: "absolute", right: 14 },
   iconButton: {
     backgroundColor: "#334155",
     borderRadius: 10,
