@@ -1,0 +1,29 @@
+<svg viewBox="0 0 64 64" width="64" height="64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Dark tile so the mark stays legible on light and dark browser tabs. -->
+  <rect width="64" height="64" rx="14" fill="#0F172A"/>
+  <g transform="translate(4.8,4.8) scale(0.85)">
+    <defs>
+      <linearGradient id="bl" x1="14" y1="0" x2="0" y2="0" gradientUnits="userSpaceOnUse">
+        <stop stop-color="#60A5FA" stop-opacity="0.55"/>
+        <stop offset="1" stop-color="#60A5FA" stop-opacity="0"/>
+      </linearGradient>
+      <linearGradient id="br" x1="50" y1="0" x2="64" y2="0" gradientUnits="userSpaceOnUse">
+        <stop stop-color="#60A5FA" stop-opacity="0.55"/>
+        <stop offset="1" stop-color="#60A5FA" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <path d="M14 17 L0 8 V26 Z" fill="url(#bl)"/>
+    <path d="M50 17 L64 8 V26 Z" fill="url(#br)"/>
+    <path d="M24 31 H40 L47 57 H17 Z" fill="#E2E8F0"/>
+    <path d="M21.6 40 H42.4 L44 46 H20 Z" fill="#2563EB"/>
+    <rect x="12" y="56" width="40" height="6" rx="2.5" fill="#CBD5E1"/>
+    <rect x="18" y="26" width="28" height="5.5" rx="2.5" fill="#CBD5E1"/>
+    <rect x="27" y="12" width="10" height="9" rx="2" fill="#CBD5E1"/>
+    <circle cx="23" cy="17" r="8.5" fill="#E2E8F0"/>
+    <circle cx="41" cy="17" r="8.5" fill="#E2E8F0"/>
+    <circle cx="23" cy="17" r="4.2" fill="#2563EB"/>
+    <circle cx="41" cy="17" r="4.2" fill="#2563EB"/>
+    <circle cx="21.6" cy="15.6" r="1.5" fill="#BFDBFE"/>
+    <circle cx="39.6" cy="15.6" r="1.5" fill="#BFDBFE"/>
+  </g>
+</svg>

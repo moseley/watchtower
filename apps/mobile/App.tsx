@@ -26,6 +26,7 @@ import {
   type WatchRow,
 } from "./lib/api";
 import { registerForPushNotificationsAsync } from "./lib/push";
+import { Logo } from "./components/Logo";
 
 type Source = "weather" | "music";
 type Metric = "temperature" | "precipitation_probability" | "wind_speed";
@@ -289,8 +290,13 @@ export default function App() {
     <View style={styles.root}>
       <StatusBar style="light" />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={styles.title}>Watchtower</Text>
-        <Text style={styles.subtitle}>{status}</Text>
+        <View style={styles.header}>
+          <Logo size={52} />
+          <View style={styles.headerText}>
+            <Text style={styles.title}>Watchtower</Text>
+            <Text style={styles.subtitle}>{status}</Text>
+          </View>
+        </View>
 
         {lastPush && (
           <View style={styles.pushBanner}>
@@ -530,8 +536,10 @@ function Chip({ label, active, onPress }: { label: string; active: boolean; onPr
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#0F172A" },
   content: { padding: 20, paddingTop: 64, paddingBottom: 48 },
+  header: { flexDirection: "row", alignItems: "center", gap: 13, marginBottom: 16 },
+  headerText: { flex: 1 },
   title: { fontSize: 32, fontWeight: "800", color: "#fff" },
-  subtitle: { fontSize: 14, color: "#94A3B8", marginTop: 4, marginBottom: 16 },
+  subtitle: { fontSize: 14, color: "#94A3B8", marginTop: 4 },
   pushBanner: { backgroundColor: "#1D4ED8", borderRadius: 12, padding: 14, marginBottom: 16 },
   pushBannerText: { color: "#fff", fontSize: 15, fontWeight: "600" },
   card: { backgroundColor: "#1E293B", borderRadius: 16, padding: 18 },

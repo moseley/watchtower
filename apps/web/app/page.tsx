@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Logo } from "./components/Logo";
 
 type Source = "weather" | "music";
 type Metric = "temperature" | "precipitation_probability" | "wind_speed";
@@ -328,10 +329,15 @@ export default function Home() {
   return (
     <main className="min-h-screen w-full bg-slate-950 text-white">
       <div className="mx-auto w-full max-w-xl px-5 py-12">
-        <h1 className="text-4xl font-extrabold">Watchtower</h1>
-        <p className="mt-1 text-sm text-slate-400">
-          Watch a source, match your criteria, get notified.
-        </p>
+        <div className="flex items-center gap-3.5">
+          <Logo className="h-14 w-14 shrink-0" />
+          <div>
+            <h1 className="text-4xl font-extrabold leading-none">Watchtower</h1>
+            <p className="mt-2 text-sm text-slate-400">
+              Watch a source, match your criteria, get notified.
+            </p>
+          </div>
+        </div>
         {status && <p className="mt-3 text-sm text-slate-300">{status}</p>}
 
         {!supported && (
