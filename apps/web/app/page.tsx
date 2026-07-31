@@ -63,6 +63,10 @@ const OWNER_KEY = "watchtower.ownerId";
 const MUSIC_LIMIT = 5;
 
 type TempUnit = "F" | "C";
+type ListView = "watches" | "history";
+
+/** How many alerts to show at a time before "View more". */
+const HISTORY_PAGE = 10;
 
 /** Roughly the same temperature in each scale, so the default reads sensibly. */
 const DEFAULT_THRESHOLD: Record<TempUnit, string> = { F: "85", C: "29" };
@@ -139,6 +143,8 @@ export default function Home() {
   const [source, setSource] = useState<Source>("weather");
   const [watches, setWatches] = useState<WatchRow[]>([]);
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
+  const [listView, setListView] = useState<ListView>("watches");
+  const [historyLimit, setHistoryLimit] = useState(HISTORY_PAGE);
   const [busy, setBusy] = useState(false);
 
   // weather form
@@ -215,6 +221,20 @@ export default function Home() {
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [ownerId, refreshNotifications]);
+
+  // The service worker sends a clicked notification to /#history, including
+  // when it reuses a tab that is already open.
+  useEffect(() => {
+    const openHistory = () => {
+      if (window.location.hash === "#history") {
+        setListView("history");
+        setHistoryLimit(HISTORY_PAGE);
+      }
+    };
+    openHistory();
+    window.addEventListener("hashchange", openHistory);
+    return () => window.removeEventListener("hashchange", openHistory);
+  }, []);
 
   async function enableNotifications() {
     setBusy(true);
@@ -775,55 +795,72 @@ export default function Home() {
           </button>
         </div>
 
-        <h2 className="mt-8 text-base font-bold">Your watches ({watches.length})</h2>
-        <div className="mt-3 space-y-2">
-          {watches.length === 0 ? (
-            <p className="text-sm text-slate-500">No watches yet.</p>
-          ) : (
-            watches.map((w) => (
-              <div key={w.id} className="flex items-center gap-3 rounded-xl bg-slate-900 p-4">
-                <span className="text-xl">{iconFor(w)}</span>
-                <div className="flex-1">
-                  <p className="font-semibold">
-                    {w.source === "music"
-                      ? (w.config.artist?.name ?? w.label)
-                      : (w.config.location?.label ?? w.label)}
-                  </p>
-                  <p className="text-sm text-slate-400">{describeRule(w)}</p>
-                </div>
-                <button
-                  className="rounded-lg p-1.5 hover:bg-slate-800"
-                  onClick={() => onDelete(w.id)}
-                  title="Delete watch"
-                >
-                  🗑️
-                </button>
-              </div>
-            ))
-          )}
+        <div id="history" className="mt-8 flex gap-2">
+          <Tab
+            label={`Watches (${watches.length})`}
+            active={listView === "watches"}
+            onClick={() => setListView("watches")}
+          />
+          <Tab
+            label={`History (${notifications.length})`}
+            active={listView === "history"}
+            onClick={() => setListView("history")}
+          />
         </div>
 
-        <h2 id="history" className="mt-8 text-base font-bold">
-          History ({notifications.length})
-        </h2>
         <div className="mt-3 space-y-2">
-          {notifications.length === 0 ? (
+          {listView === "watches" ? (
+            watches.length === 0 ? (
+              <p className="text-sm text-slate-500">No watches yet.</p>
+            ) : (
+              watches.map((w) => (
+                <div key={w.id} className="flex items-center gap-3 rounded-xl bg-slate-900 p-4">
+                  <span className="text-xl">{iconFor(w)}</span>
+                  <div className="flex-1">
+                    <p className="font-semibold">
+                      {w.source === "music"
+                        ? (w.config.artist?.name ?? w.label)
+                        : (w.config.location?.label ?? w.label)}
+                    </p>
+                    <p className="text-sm text-slate-400">{describeRule(w)}</p>
+                  </div>
+                  <button
+                    className="rounded-lg p-1.5 hover:bg-slate-800"
+                    onClick={() => onDelete(w.id)}
+                    title="Delete watch"
+                  >
+                    🗑️
+                  </button>
+                </div>
+              ))
+            )
+          ) : notifications.length === 0 ? (
             <p className="text-sm text-slate-500">
               No alerts yet. They&apos;ll appear here as your watches fire.
             </p>
           ) : (
-            notifications.map((n) => (
-              <div key={n.id} className="flex items-start gap-3 rounded-xl bg-slate-900 p-4">
-                <span className="text-xl leading-none">{iconForSource(n.source, n.title)}</span>
-                <div className="flex-1">
-                  <p className="text-sm">{n.body}</p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {n.watchLabel} · {timeAgo(n.createdAt)}
-                    {n.status === "failed" ? " · not delivered" : ""}
-                  </p>
+            <>
+              {notifications.slice(0, historyLimit).map((n) => (
+                <div key={n.id} className="flex items-start gap-3 rounded-xl bg-slate-900 p-4">
+                  <span className="text-xl leading-none">{iconForSource(n.source, n.title)}</span>
+                  <div className="flex-1">
+                    <p className="text-sm">{n.body}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {n.watchLabel} · {timeAgo(n.createdAt)}
+                      {n.status === "failed" ? " · not delivered" : ""}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            ))
+              ))}
+              {notifications.length > historyLimit && (
+                <button
+                  className="w-full rounded-xl bg-slate-900 py-3 text-sm font-semibold text-slate-400 hover:bg-slate-800"
+                  onClick={() => setHistoryLimit((n) => n + HISTORY_PAGE)}
+                >
+                  View {Math.min(HISTORY_PAGE, notifications.length - historyLimit)} more
+                </button>
+              )}
+            </>
           )}
         </div>
 

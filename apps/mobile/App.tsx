@@ -41,6 +41,10 @@ const MUSIC_LIMIT = 5;
 const LOCATION_TIMEOUT_MS = 8000;
 
 type TempUnit = "F" | "C";
+type ListView = "watches" | "history";
+
+/** How many alerts to show at a time before "View more". */
+const HISTORY_PAGE = 10;
 
 /** Roughly the same temperature in each scale, so the default reads sensibly. */
 const DEFAULT_THRESHOLD: Record<TempUnit, string> = { F: "85", C: "29" };
@@ -107,6 +111,8 @@ export default function App() {
   const [source, setSource] = useState<Source>("weather");
   const [watches, setWatches] = useState<WatchRow[]>([]);
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
+  const [listView, setListView] = useState<ListView>("watches");
+  const [historyLimit, setHistoryLimit] = useState(HISTORY_PAGE);
   // Lets a tapped notification scroll straight to the history instead of
   // dropping the user on the form with no explanation.
   const scrollRef = useRef<ScrollView>(null);
@@ -177,6 +183,8 @@ export default function App() {
       // Tapping a notification should land somewhere that explains it.
       tapped = Notifications.addNotificationResponseReceivedListener(() => {
         if (currentOwner) void refreshNotifications(currentOwner);
+        setListView("history");
+        setHistoryLimit(HISTORY_PAGE);
         setTimeout(
           () => scrollRef.current?.scrollTo({ y: historyYRef.current, animated: true }),
           300,
@@ -704,36 +712,50 @@ export default function App() {
           </Pressable>
         </View>
 
-        <Text style={styles.sectionTitle}>Your watches ({watches.length})</Text>
-        {watches.length === 0 ? (
-          <Text style={styles.empty}>No watches yet.</Text>
-        ) : (
-          watches.map((w) => (
-            <View key={w.id} style={styles.watchRow}>
-              <Text style={styles.watchIcon}>{iconFor(w)}</Text>
-              <View style={styles.watchBody}>
-                <Text style={styles.watchLabel}>
-                  {w.source === "music"
-                    ? (w.config.artist?.name ?? w.label)
-                    : (w.config.location?.label ?? w.label)}
-                </Text>
-                <Text style={styles.watchMeta}>{describeRule(w)}</Text>
-              </View>
-              <Pressable style={styles.deleteButton} onPress={() => onDelete(w.id)}>
-                <Text style={styles.deleteIcon}>🗑️</Text>
-              </Pressable>
-            </View>
-          ))
-        )}
+        <View
+          style={styles.listTabRow}
+          onLayout={(e) => (historyYRef.current = e.nativeEvent.layout.y)}
+        >
+          <Tab
+            label={`Watches (${watches.length})`}
+            active={listView === "watches"}
+            onPress={() => setListView("watches")}
+          />
+          <Tab
+            label={`History (${notifications.length})`}
+            active={listView === "history"}
+            onPress={() => setListView("history")}
+          />
+        </View>
 
-        <View onLayout={(e) => (historyYRef.current = e.nativeEvent.layout.y)}>
-          <Text style={styles.sectionTitle}>History ({notifications.length})</Text>
-          {notifications.length === 0 ? (
-            <Text style={styles.empty}>
-              No alerts yet. They&apos;ll appear here as your watches fire.
-            </Text>
+        {listView === "watches" ? (
+          watches.length === 0 ? (
+            <Text style={styles.empty}>No watches yet.</Text>
           ) : (
-            notifications.map((n) => (
+            watches.map((w) => (
+              <View key={w.id} style={styles.watchRow}>
+                <Text style={styles.watchIcon}>{iconFor(w)}</Text>
+                <View style={styles.watchBody}>
+                  <Text style={styles.watchLabel}>
+                    {w.source === "music"
+                      ? (w.config.artist?.name ?? w.label)
+                      : (w.config.location?.label ?? w.label)}
+                  </Text>
+                  <Text style={styles.watchMeta}>{describeRule(w)}</Text>
+                </View>
+                <Pressable style={styles.deleteButton} onPress={() => onDelete(w.id)}>
+                  <Text style={styles.deleteIcon}>🗑️</Text>
+                </Pressable>
+              </View>
+            ))
+          )
+        ) : notifications.length === 0 ? (
+          <Text style={styles.empty}>
+            No alerts yet. They&apos;ll appear here as your watches fire.
+          </Text>
+        ) : (
+          <>
+            {notifications.slice(0, historyLimit).map((n) => (
               <View key={n.id} style={styles.watchRow}>
                 <Text style={styles.watchIcon}>{iconForSource(n.source, n.title)}</Text>
                 <View style={styles.watchBody}>
@@ -744,9 +766,19 @@ export default function App() {
                   </Text>
                 </View>
               </View>
-            ))
-          )}
-        </View>
+            ))}
+            {notifications.length > historyLimit && (
+              <Pressable
+                style={styles.viewMore}
+                onPress={() => setHistoryLimit((n) => n + HISTORY_PAGE)}
+              >
+                <Text style={styles.viewMoreText}>
+                  View {Math.min(HISTORY_PAGE, notifications.length - historyLimit)} more
+                </Text>
+              </Pressable>
+            )}
+          </>
+        )}
       </ScrollView>
     </View>
   );
@@ -858,6 +890,14 @@ const styles = StyleSheet.create({
   buttonDisabled: { backgroundColor: "#334155" },
   buttonText: { color: "#fff", fontSize: 16, fontWeight: "700" },
   sectionTitle: { fontSize: 16, fontWeight: "700", color: "#fff", marginTop: 28, marginBottom: 10 },
+  listTabRow: { flexDirection: "row", gap: 8, marginTop: 28, marginBottom: 12 },
+  viewMore: {
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: "#1E293B",
+  },
+  viewMoreText: { color: "#94A3B8", fontWeight: "600", fontSize: 14 },
   empty: { color: "#64748B" },
   watchRow: {
     backgroundColor: "#1E293B",
