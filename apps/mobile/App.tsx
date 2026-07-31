@@ -40,6 +40,14 @@ const MUSIC_LIMIT = 5;
 /** Cap on waiting for a GPS fix before falling back to the last known one. */
 const LOCATION_TIMEOUT_MS = 8000;
 
+type TempUnit = "F" | "C";
+
+/** Roughly the same temperature in each scale, so the default reads sensibly. */
+const DEFAULT_THRESHOLD: Record<TempUnit, string> = { F: "85", C: "29" };
+
+const fahrenheitToCelsius = (f: number) => Math.round(((f - 32) * 5) / 9);
+const celsiusToFahrenheit = (c: number) => Math.round((c * 9) / 5 + 32);
+
 const METRICS: { key: Metric; label: string }[] = [
   { key: "temperature", label: "Temperature" },
   { key: "precipitation_probability", label: "Rain %" },
@@ -66,6 +74,22 @@ function iconForSource(source: string, title: string): string {
   const leading = Array.from(title)[0];
   // The engine already picks a fitting emoji per alert; reuse it when present.
   return leading && /\p{Extended_Pictographic}/u.test(leading) ? leading : "🔔";
+}
+
+/** e.g. "temperature above 85°F", "rain above 60%" */
+function describeRule(w: WatchRow): string {
+  if (w.source === "music") {
+    return w.config.includeSingles ? "new albums, EPs & singles" : "new albums & EPs";
+  }
+  const rule = w.config.rule;
+  if (!rule) return "";
+  const suffix =
+    rule.metric === "temperature"
+      ? `°${rule.unit ?? "F"}`
+      : rule.metric === "precipitation_probability"
+        ? "%"
+        : ` ${rule.unit ?? "mph"}`;
+  return `${rule.metric?.replace(/_/g, " ")} ${rule.comparator} ${rule.threshold}${suffix}`;
 }
 
 function iconFor(w: WatchRow): string {
@@ -102,7 +126,14 @@ export default function App() {
   const userTypedRef = useRef(false);
   const [metric, setMetric] = useState<Metric>("temperature");
   const [comparator, setComparator] = useState<Comparator>("below");
-  const [threshold, setThreshold] = useState("35");
+  const [tempUnit, setTempUnit] = useState<TempUnit>("F");
+  const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD.F);
+  const lastConversionRef = useRef<{
+    from: TempUnit;
+    to: TempUnit;
+    original: string;
+    converted: string;
+  } | null>(null);
 
   // music form
   const [artistQuery, setArtistQuery] = useState("");
@@ -289,6 +320,28 @@ export default function App() {
     };
   }, [locationText, locationEdited, source]);
 
+  /** Convert the entered value so switching scales keeps the same weather. */
+  function switchTempUnit(next: TempUnit) {
+    if (next === tempUnit) return;
+    const prior = lastConversionRef.current;
+    // Toggling back without editing restores the exact original: converting
+    // both ways rounds twice and would drift 85 -> 29 -> 84.
+    if (prior && prior.to === tempUnit && prior.from === next && prior.converted === threshold) {
+      setThreshold(prior.original);
+      lastConversionRef.current = null;
+      setTempUnit(next);
+      return;
+    }
+    const value = Number(threshold);
+    const converted =
+      Number.isFinite(value) && threshold.trim() !== ""
+        ? String(next === "C" ? fahrenheitToCelsius(value) : celsiusToFahrenheit(value))
+        : DEFAULT_THRESHOLD[next];
+    lastConversionRef.current = { from: tempUnit, to: next, original: threshold, converted };
+    setThreshold(converted);
+    setTempUnit(next);
+  }
+
   function thresholdError(): string | null {
     const value = Number(threshold);
     if (threshold.trim() === "" || !Number.isFinite(value)) return "Enter a number";
@@ -316,7 +369,7 @@ export default function App() {
     const value = Number(threshold);
     const rule =
       metric === "temperature"
-        ? { metric, comparator, threshold: value, unit: "F" as const, withinHours: 12 }
+        ? { metric, comparator, threshold: value, unit: tempUnit, withinHours: 12 }
         : metric === "precipitation_probability"
           ? { metric, comparator: "above" as const, threshold: value, withinHours: 6 }
           : {
@@ -519,16 +572,38 @@ export default function App() {
                 </>
               )}
 
+              {metric === "temperature" && (
+                <>
+                  <Text style={styles.fieldLabel}>Units</Text>
+                  <View style={styles.chipRow}>
+                    <Chip
+                      label="°F"
+                      active={tempUnit === "F"}
+                      onPress={() => switchTempUnit("F")}
+                    />
+                    <Chip
+                      label="°C"
+                      active={tempUnit === "C"}
+                      onPress={() => switchTempUnit("C")}
+                    />
+                  </View>
+                </>
+              )}
+
               <Text style={styles.fieldLabel}>
                 Threshold{" "}
-                {metric === "temperature" ? "(°F)" : metric === "wind_speed" ? "(mph)" : "(0–100 %)"}
+                {metric === "temperature"
+                  ? `(°${tempUnit})`
+                  : metric === "wind_speed"
+                    ? "(mph)"
+                    : "(0–100 %)"}
               </Text>
               <TextInput
                 style={[styles.input, thresholdProblem ? styles.inputError : null]}
                 value={threshold}
                 onChangeText={setThreshold}
                 keyboardType="numeric"
-                placeholder="35"
+                placeholder={metric === "temperature" ? DEFAULT_THRESHOLD[tempUnit] : "35"}
                 placeholderTextColor="#475569"
               />
               {thresholdProblem && <Text style={styles.errorHint}>{thresholdProblem}</Text>}
@@ -642,13 +717,7 @@ export default function App() {
                     ? (w.config.artist?.name ?? w.label)
                     : (w.config.location?.label ?? w.label)}
                 </Text>
-                <Text style={styles.watchMeta}>
-                  {w.source === "music"
-                    ? w.config.includeSingles
-                      ? "new albums, EPs & singles"
-                      : "new albums & EPs"
-                    : `${w.config.rule?.metric?.replace(/_/g, " ")} ${w.config.rule?.comparator} ${w.config.rule?.threshold}`}
-                </Text>
+                <Text style={styles.watchMeta}>{describeRule(w)}</Text>
               </View>
               <Pressable style={styles.deleteButton} onPress={() => onDelete(w.id)}>
                 <Text style={styles.deleteIcon}>🗑️</Text>

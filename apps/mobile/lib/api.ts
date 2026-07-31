@@ -48,7 +48,7 @@ export interface WatchRow {
   source: string;
   config: {
     location?: { label?: string };
-    rule?: { metric?: string; comparator?: string; threshold?: number };
+    rule?: { metric?: string; comparator?: string; threshold?: number; unit?: string };
     artist?: { name?: string; mbid?: string };
     includeSingles?: boolean;
   };

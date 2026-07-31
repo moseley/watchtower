@@ -13,7 +13,7 @@ interface WatchRow {
   source: string;
   config: {
     location?: { label?: string };
-    rule?: { metric?: string; comparator?: string; threshold?: number };
+    rule?: { metric?: string; comparator?: string; threshold?: number; unit?: string };
     artist?: { name?: string; mbid?: string };
     includeSingles?: boolean;
   };
@@ -61,6 +61,30 @@ interface ArtistHit {
 
 const OWNER_KEY = "watchtower.ownerId";
 const MUSIC_LIMIT = 5;
+
+type TempUnit = "F" | "C";
+
+/** Roughly the same temperature in each scale, so the default reads sensibly. */
+const DEFAULT_THRESHOLD: Record<TempUnit, string> = { F: "85", C: "29" };
+
+const fahrenheitToCelsius = (f: number) => Math.round(((f - 32) * 5) / 9);
+const celsiusToFahrenheit = (c: number) => Math.round((c * 9) / 5 + 32);
+
+/** e.g. "temperature above 85°F", "rain above 60%" */
+function describeRule(w: WatchRow): string {
+  if (w.source === "music") {
+    return w.config.includeSingles ? "new albums, EPs & singles" : "new albums & EPs";
+  }
+  const rule = w.config.rule;
+  if (!rule) return "";
+  const suffix =
+    rule.metric === "temperature"
+      ? `°${rule.unit ?? "F"}`
+      : rule.metric === "precipitation_probability"
+        ? "%"
+        : ` ${rule.unit ?? "mph"}`;
+  return `${rule.metric?.replace(/_/g, " ")} ${rule.comparator} ${rule.threshold}${suffix}`;
+}
 
 /** Cap on waiting for a geolocation fix; the browser default is Infinity. */
 const LOCATION_TIMEOUT_MS = 8000;
@@ -129,7 +153,14 @@ export default function Home() {
   const userTypedRef = useRef(false);
   const [metric, setMetric] = useState<Metric>("temperature");
   const [comparator, setComparator] = useState<Comparator>("below");
-  const [threshold, setThreshold] = useState("35");
+  const [tempUnit, setTempUnit] = useState<TempUnit>("F");
+  const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD.F);
+  const lastConversionRef = useRef<{
+    from: TempUnit;
+    to: TempUnit;
+    original: string;
+    converted: string;
+  } | null>(null);
 
   // music form
   const [artistQuery, setArtistQuery] = useState("");
@@ -320,6 +351,28 @@ export default function Home() {
     };
   }, [locationText, locationEdited, source]);
 
+  /** Convert the entered value so switching scales keeps the same weather. */
+  function switchTempUnit(next: TempUnit) {
+    if (next === tempUnit) return;
+    const prior = lastConversionRef.current;
+    // Toggling back without editing restores the exact original: converting
+    // both ways rounds twice and would drift 85 -> 29 -> 84.
+    if (prior && prior.to === tempUnit && prior.from === next && prior.converted === threshold) {
+      setThreshold(prior.original);
+      lastConversionRef.current = null;
+      setTempUnit(next);
+      return;
+    }
+    const value = Number(threshold);
+    const converted =
+      Number.isFinite(value) && threshold.trim() !== ""
+        ? String(next === "C" ? fahrenheitToCelsius(value) : celsiusToFahrenheit(value))
+        : DEFAULT_THRESHOLD[next];
+    lastConversionRef.current = { from: tempUnit, to: next, original: threshold, converted };
+    setThreshold(converted);
+    setTempUnit(next);
+  }
+
   function thresholdError(): string | null {
     const value = Number(threshold);
     if (threshold.trim() === "" || !Number.isFinite(value)) return "Enter a number";
@@ -348,7 +401,7 @@ export default function Home() {
     const value = Number(threshold);
     const rule =
       metric === "temperature"
-        ? { metric, comparator, threshold: value, unit: "F", withinHours: 12 }
+        ? { metric, comparator, threshold: value, unit: tempUnit, withinHours: 12 }
         : metric === "precipitation_probability"
           ? { metric, comparator: "above", threshold: value, withinHours: 6 }
           : { metric, comparator: "above", threshold: value, unit: "mph", withinHours: 12 };
@@ -569,10 +622,28 @@ export default function Home() {
                 </>
               )}
 
+              {metric === "temperature" && (
+                <>
+                  <label className="mt-4 block text-xs text-slate-400">Units</label>
+                  <div className="mt-1.5 flex gap-2">
+                    <Chip
+                      label="°F"
+                      active={tempUnit === "F"}
+                      onClick={() => switchTempUnit("F")}
+                    />
+                    <Chip
+                      label="°C"
+                      active={tempUnit === "C"}
+                      onClick={() => switchTempUnit("C")}
+                    />
+                  </div>
+                </>
+              )}
+
               <label className="mt-4 block text-xs text-slate-400">
                 Threshold{" "}
                 {metric === "temperature"
-                  ? "(°F)"
+                  ? `(°${tempUnit})`
                   : metric === "wind_speed"
                     ? "(mph)"
                     : "(0–100 %)"}
@@ -582,7 +653,7 @@ export default function Home() {
                 value={threshold}
                 onChange={(e) => setThreshold(e.target.value)}
                 inputMode="numeric"
-                placeholder="35"
+                placeholder={metric === "temperature" ? DEFAULT_THRESHOLD[tempUnit] : "35"}
                 disabled={!ownerId}
               />
               {thresholdProblem && (
@@ -718,13 +789,7 @@ export default function Home() {
                       ? (w.config.artist?.name ?? w.label)
                       : (w.config.location?.label ?? w.label)}
                   </p>
-                  <p className="text-sm text-slate-400">
-                    {w.source === "music"
-                      ? w.config.includeSingles
-                        ? "new albums, EPs & singles"
-                        : "new albums & EPs"
-                      : `${w.config.rule?.metric?.replace(/_/g, " ")} ${w.config.rule?.comparator} ${w.config.rule?.threshold}`}
-                  </p>
+                  <p className="text-sm text-slate-400">{describeRule(w)}</p>
                 </div>
                 <button
                   className="rounded-lg p-1.5 hover:bg-slate-800"
