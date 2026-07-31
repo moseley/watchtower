@@ -19,6 +19,32 @@ interface WatchRow {
   };
 }
 
+interface NotificationRow {
+  id: string;
+  title: string;
+  body: string;
+  status: string;
+  createdAt: string;
+  source: string;
+  watchLabel: string;
+}
+
+function timeAgo(iso: string): string {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function iconForSource(source: string, title: string): string {
+  if (source === "music") return "🎤";
+  const leading = Array.from(title)[0];
+  // The engine already picks a fitting emoji per alert; reuse it when present.
+  return leading && /\p{Extended_Pictographic}/u.test(leading) ? leading : "🔔";
+}
+
 interface Place {
   latitude: number;
   longitude: number;
@@ -88,6 +114,7 @@ export default function Home() {
   const [supported, setSupported] = useState(true);
   const [source, setSource] = useState<Source>("weather");
   const [watches, setWatches] = useState<WatchRow[]>([]);
+  const [notifications, setNotifications] = useState<NotificationRow[]>([]);
   const [busy, setBusy] = useState(false);
 
   // weather form
@@ -125,6 +152,17 @@ export default function Home() {
     }
   }, []);
 
+  const refreshNotifications = useCallback(async (id: string) => {
+    try {
+      const json = await api<{ notifications: NotificationRow[] }>(
+        `/api/notifications?ownerId=${encodeURIComponent(id)}`,
+      );
+      setNotifications(json.notifications);
+    } catch {
+      // ignore list errors
+    }
+  }, []);
+
   useEffect(() => {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
       setSupported(false);
@@ -134,8 +172,18 @@ export default function Home() {
     if (stored) {
       setOwnerId(stored);
       void refreshWatches(stored);
+      void refreshNotifications(stored);
     }
-  }, [refreshWatches]);
+  }, [refreshWatches, refreshNotifications]);
+
+  // A browser push arrives in the service worker, so the open page won't know
+  // about it. Refresh the history when the tab regains focus.
+  useEffect(() => {
+    if (!ownerId) return;
+    const onFocus = () => void refreshNotifications(ownerId);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [ownerId, refreshNotifications]);
 
   async function enableNotifications() {
     setBusy(true);
@@ -685,6 +733,30 @@ export default function Home() {
                 >
                   🗑️
                 </button>
+              </div>
+            ))
+          )}
+        </div>
+
+        <h2 id="history" className="mt-8 text-base font-bold">
+          History ({notifications.length})
+        </h2>
+        <div className="mt-3 space-y-2">
+          {notifications.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              No alerts yet. They&apos;ll appear here as your watches fire.
+            </p>
+          ) : (
+            notifications.map((n) => (
+              <div key={n.id} className="flex items-start gap-3 rounded-xl bg-slate-900 p-4">
+                <span className="text-xl leading-none">{iconForSource(n.source, n.title)}</span>
+                <div className="flex-1">
+                  <p className="text-sm">{n.body}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {n.watchLabel} · {timeAgo(n.createdAt)}
+                    {n.status === "failed" ? " · not delivered" : ""}
+                  </p>
+                </div>
               </div>
             ))
           )}

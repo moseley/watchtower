@@ -18,12 +18,14 @@ import {
   createWatch,
   deleteWatch,
   geocode,
+  listNotifications,
   listWatches,
   registerDevice,
   reverseGeocode,
   searchArtists,
   type ArtistHit,
   type GeocodeResult,
+  type NotificationRow,
   type WatchRow,
 } from "./lib/api";
 import { registerForPushNotificationsAsync } from "./lib/push";
@@ -50,6 +52,22 @@ const METRIC_NAMES: Record<Metric, string> = {
   wind_speed: "wind",
 };
 
+function timeAgo(iso: string): string {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function iconForSource(source: string, title: string): string {
+  if (source === "music") return "🎤";
+  const leading = Array.from(title)[0];
+  // The engine already picks a fitting emoji per alert; reuse it when present.
+  return leading && /\p{Extended_Pictographic}/u.test(leading) ? leading : "🔔";
+}
+
 function iconFor(w: WatchRow): string {
   if (w.source === "music") return "🎤";
   const rule = w.config.rule;
@@ -64,6 +82,11 @@ export default function App() {
   const [status, setStatus] = useState("Starting…");
   const [source, setSource] = useState<Source>("weather");
   const [watches, setWatches] = useState<WatchRow[]>([]);
+  const [notifications, setNotifications] = useState<NotificationRow[]>([]);
+  // Lets a tapped notification scroll straight to the history instead of
+  // dropping the user on the form with no explanation.
+  const scrollRef = useRef<ScrollView>(null);
+  const historyYRef = useRef(0);
   const [busy, setBusy] = useState(false);
   const [lastPush, setLastPush] = useState<string | null>(null);
 
@@ -92,7 +115,9 @@ export default function App() {
   const musicCount = watches.filter((w) => w.source === "music").length;
 
   useEffect(() => {
-    let sub: ReturnType<typeof Notifications.addNotificationReceivedListener> | undefined;
+    let received: ReturnType<typeof Notifications.addNotificationReceivedListener> | undefined;
+    let tapped: ReturnType<typeof Notifications.addNotificationResponseReceivedListener> | undefined;
+    let currentOwner: string | null = null;
 
     (async () => {
       try {
@@ -100,23 +125,38 @@ export default function App() {
         const token = await registerForPushNotificationsAsync();
         const platform = Platform.OS === "ios" ? "ios" : "android";
         const reg = await registerDevice(token, platform);
+        currentOwner = reg.ownerId;
         setOwnerId(reg.ownerId);
         setStatus("Registered ✓");
         await refreshWatches(reg.ownerId);
+        await refreshNotifications(reg.ownerId);
       } catch (err) {
         setStatus(`Setup failed: ${(err as Error).message}`);
       }
 
       await useCurrentLocation();
 
-      sub = Notifications.addNotificationReceivedListener((n) => {
+      received = Notifications.addNotificationReceivedListener((n) => {
         const t = n.request.content.title ?? "Notification";
         const b = n.request.content.body ?? "";
         setLastPush(`${t} — ${b}`);
+        if (currentOwner) void refreshNotifications(currentOwner);
+      });
+
+      // Tapping a notification should land somewhere that explains it.
+      tapped = Notifications.addNotificationResponseReceivedListener(() => {
+        if (currentOwner) void refreshNotifications(currentOwner);
+        setTimeout(
+          () => scrollRef.current?.scrollTo({ y: historyYRef.current, animated: true }),
+          300,
+        );
       });
     })();
 
-    return () => sub?.remove();
+    return () => {
+      received?.remove();
+      tapped?.remove();
+    };
   }, []);
 
   // Auto-hide the in-app push banner after a few seconds.
@@ -171,6 +211,14 @@ export default function App() {
   async function refreshWatches(id: string) {
     try {
       setWatches(await listWatches(id));
+    } catch {
+      // ignore list errors
+    }
+  }
+
+  async function refreshNotifications(id: string) {
+    try {
+      setNotifications(await listNotifications(id));
     } catch {
       // ignore list errors
     }
@@ -351,7 +399,11 @@ export default function App() {
   return (
     <View style={styles.root}>
       <StatusBar style="light" />
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        ref={scrollRef}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.header}>
           <Logo size={52} />
           <View style={styles.headerText}>
@@ -604,6 +656,28 @@ export default function App() {
             </View>
           ))
         )}
+
+        <View onLayout={(e) => (historyYRef.current = e.nativeEvent.layout.y)}>
+          <Text style={styles.sectionTitle}>History ({notifications.length})</Text>
+          {notifications.length === 0 ? (
+            <Text style={styles.empty}>
+              No alerts yet. They&apos;ll appear here as your watches fire.
+            </Text>
+          ) : (
+            notifications.map((n) => (
+              <View key={n.id} style={styles.watchRow}>
+                <Text style={styles.watchIcon}>{iconForSource(n.source, n.title)}</Text>
+                <View style={styles.watchBody}>
+                  <Text style={styles.watchLabel}>{n.body}</Text>
+                  <Text style={styles.watchMeta}>
+                    {n.watchLabel} · {timeAgo(n.createdAt)}
+                    {n.status === "failed" ? " · not delivered" : ""}
+                  </Text>
+                </View>
+              </View>
+            ))
+          )}
+        </View>
       </ScrollView>
     </View>
   );

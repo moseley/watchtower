@@ -81,6 +81,24 @@ export async function listWatches(ownerId: string): Promise<WatchRow[]> {
   return json.watches;
 }
 
+export interface NotificationRow {
+  id: string;
+  title: string;
+  body: string;
+  status: string;
+  createdAt: string;
+  source: string;
+  watchLabel: string;
+}
+
+/** Every alert sent to this owner, newest first. */
+export async function listNotifications(ownerId: string): Promise<NotificationRow[]> {
+  const json = await request<{ notifications: NotificationRow[] }>(
+    `/api/notifications?ownerId=${encodeURIComponent(ownerId)}`,
+  );
+  return json.notifications;
+}
+
 export interface GeocodeResult {
   latitude: number;
   longitude: number;
