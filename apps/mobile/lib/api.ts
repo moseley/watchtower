@@ -87,9 +87,16 @@ export interface GeocodeResult {
   label: string;
 }
 
-/** City name or postal code → coordinates + display label. */
-export function geocode(query: string): Promise<GeocodeResult> {
-  return request<GeocodeResult>(`/api/geocode?q=${encodeURIComponent(query)}`);
+/** City name or postal code → the best match, plus the other candidates. */
+export async function geocode(
+  query: string,
+  signal?: AbortSignal,
+): Promise<GeocodeResult & { results: GeocodeResult[] }> {
+  const json = await request<GeocodeResult & { results?: GeocodeResult[] }>(
+    `/api/geocode?q=${encodeURIComponent(query)}`,
+    signal ? { signal } : undefined,
+  );
+  return { ...json, results: json.results ?? [json] };
 }
 
 /** Coordinates → display label (for the GPS default). */

@@ -19,6 +19,12 @@ interface WatchRow {
   };
 }
 
+interface Place {
+  latitude: number;
+  longitude: number;
+  label: string;
+}
+
 interface ArtistHit {
   mbid: string;
   name: string;
@@ -89,6 +95,8 @@ export default function Home() {
   const [locationText, setLocationText] = useState("");
   const [locationEdited, setLocationEdited] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [locationHits, setLocationHits] = useState<Place[]>([]);
+  const [searchingLocation, setSearchingLocation] = useState(false);
   // Tracks whether the user has typed a location, so a late-arriving fix
   // doesn't overwrite what they entered.
   const userTypedRef = useRef(false);
@@ -229,6 +237,40 @@ export default function Home() {
       controller.abort();
     };
   }, [artistQuery, source, artist]);
+
+  // Resolve what the user types into concrete places, so an ambiguous name
+  // ("San Jose") can be disambiguated before the watch is created rather than
+  // after. Same debounce-and-abort shape as the artist search above.
+  useEffect(() => {
+    const q = locationText.trim();
+    if (source !== "weather" || !locationEdited || q.length < 2) {
+      setLocationHits([]);
+      setSearchingLocation(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setSearchingLocation(true);
+      try {
+        const json = await api<{ results?: Place[] }>(
+          `/api/geocode?q=${encodeURIComponent(q)}`,
+          { signal: controller.signal },
+        );
+        setLocationHits(json.results ?? []);
+      } catch (err) {
+        if ((err as Error).name === "AbortError") return; // superseded
+        setLocationHits([]); // e.g. 404 no match — the hint covers it
+      } finally {
+        if (!controller.signal.aborted) setSearchingLocation(false);
+      }
+    }, 350);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [locationText, locationEdited, source]);
 
   function thresholdError(): string | null {
     const value = Number(threshold);
@@ -414,13 +456,38 @@ export default function Home() {
                 </button>
               </div>
               {coords && !locationEdited && (
-                <p className="mt-1.5 text-xs text-slate-500">
-                  Using {coords.latitude.toFixed(3)}, {coords.longitude.toFixed(3)}
+                <p className="mt-1.5 text-xs text-green-400">
+                  ✓ {locationText} ({coords.latitude.toFixed(3)},{" "}
+                  {coords.longitude.toFixed(3)})
                 </p>
               )}
-              {locationEdited && (
+              {locationEdited && locationHits.length > 0 && (
+                <div className="mt-2 space-y-1.5">
+                  {locationHits.map((place) => (
+                    <button
+                      key={`${place.latitude},${place.longitude}`}
+                      className="flex w-full items-center gap-3 rounded-lg bg-slate-950 p-3 text-left hover:bg-slate-800"
+                      onClick={() => {
+                        setCoords({ latitude: place.latitude, longitude: place.longitude });
+                        setLocationText(place.label);
+                        setLocationEdited(false);
+                        setLocationHits([]);
+                      }}
+                    >
+                      <span>📍</span>
+                      <span className="flex-1 text-sm font-semibold">{place.label}</span>
+                      <span className="text-xs text-slate-500">select</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {locationEdited && locationHits.length === 0 && (
                 <p className="mt-1.5 text-xs text-slate-500">
-                  Will look up this location on create
+                  {searchingLocation
+                    ? "Looking up…"
+                    : locationText.trim().length < 2
+                      ? "Type a city or zip code"
+                      : "No match yet — the closest one is used when you create the watch"}
                 </p>
               )}
 

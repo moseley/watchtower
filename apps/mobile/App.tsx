@@ -23,6 +23,7 @@ import {
   reverseGeocode,
   searchArtists,
   type ArtistHit,
+  type GeocodeResult,
   type WatchRow,
 } from "./lib/api";
 import { registerForPushNotificationsAsync } from "./lib/push";
@@ -71,6 +72,8 @@ export default function App() {
   const [locationText, setLocationText] = useState("");
   const [locationEdited, setLocationEdited] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [locationHits, setLocationHits] = useState<GeocodeResult[]>([]);
+  const [searchingLocation, setSearchingLocation] = useState(false);
   // Tracks whether the user has typed a location, so a late-arriving GPS fix
   // doesn't overwrite what they entered.
   const userTypedRef = useRef(false);
@@ -206,6 +209,37 @@ export default function App() {
       controller.abort();
     };
   }, [artistQuery, source, artist]);
+
+  // Resolve what the user types into concrete places, so an ambiguous name
+  // ("San Jose") can be disambiguated before the watch is created rather than
+  // after. Same debounce-and-abort shape as the artist search above.
+  useEffect(() => {
+    const q = locationText.trim();
+    if (source !== "weather" || !locationEdited || q.length < 2) {
+      setLocationHits([]);
+      setSearchingLocation(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setSearchingLocation(true);
+      try {
+        const hit = await geocode(q, controller.signal);
+        setLocationHits(hit.results);
+      } catch (err) {
+        if ((err as Error).name === "AbortError") return; // superseded
+        setLocationHits([]); // e.g. 404 no match — the hint covers it
+      } finally {
+        if (!controller.signal.aborted) setSearchingLocation(false);
+      }
+    }, 350);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [locationText, locationEdited, source]);
 
   function thresholdError(): string | null {
     const value = Number(threshold);
@@ -370,12 +404,37 @@ export default function App() {
                 </Pressable>
               </View>
               {coords && !locationEdited && (
-                <Text style={styles.hint}>
-                  Using {coords.latitude.toFixed(3)}, {coords.longitude.toFixed(3)}
+                <Text style={styles.confirmedHint}>
+                  ✓ {locationText} ({coords.latitude.toFixed(3)}, {coords.longitude.toFixed(3)})
                 </Text>
               )}
-              {locationEdited && (
-                <Text style={styles.hint}>Will look up this location on create</Text>
+              {locationEdited &&
+                locationHits.map((place) => (
+                  <Pressable
+                    key={`${place.latitude},${place.longitude}`}
+                    style={styles.hitRow}
+                    onPress={() => {
+                      setCoords({ latitude: place.latitude, longitude: place.longitude });
+                      setLocationText(place.label);
+                      setLocationEdited(false);
+                      setLocationHits([]);
+                    }}
+                  >
+                    <Text style={styles.watchIcon}>📍</Text>
+                    <View style={styles.watchBody}>
+                      <Text style={styles.hitName}>{place.label}</Text>
+                    </View>
+                    <Text style={styles.watchMeta}>select</Text>
+                  </Pressable>
+                ))}
+              {locationEdited && locationHits.length === 0 && (
+                <Text style={styles.hint}>
+                  {searchingLocation
+                    ? "Looking up…"
+                    : locationText.trim().length < 2
+                      ? "Type a city or zip code"
+                      : "No match yet — the closest one is used when you create the watch"}
+                </Text>
               )}
 
               <Text style={styles.fieldLabel}>Metric</Text>
@@ -619,6 +678,7 @@ const styles = StyleSheet.create({
   chipText: { color: "#94A3B8", fontWeight: "600" },
   chipTextActive: { color: "#fff" },
   hint: { color: "#64748B", fontSize: 12, marginTop: 8 },
+  confirmedHint: { color: "#4ADE80", fontSize: 12, marginTop: 8 },
   warnHint: { color: "#FBBF24", fontSize: 12, marginTop: 10 },
   errorHint: { color: "#F87171", fontSize: 12, marginTop: 6 },
   selectedArtist: {
