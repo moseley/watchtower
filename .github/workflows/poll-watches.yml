@@ -1,0 +1,49 @@
+name: Poll watches
+
+# The watcher engine only runs when something calls it. This lives in the repo
+# rather than a third-party dashboard so it is versioned, reviewable, and — the
+# part that matters — fails loudly in the Actions tab instead of silently
+# disappearing.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: # lets you run it by hand from the Actions tab
+
+# A slow run should never pile up behind the next tick.
+concurrency:
+  group: poll-watches
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger watcher engine
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          POLL_URL: https://watchtower-web-nu.vercel.app/api/cron/poll
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::CRON_SECRET repository secret is not set — the poll would 401."
+            exit 1
+          fi
+
+          code=$(curl -sS --max-time 120 \
+            -o response.json -w '%{http_code}' \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$POLL_URL")
+
+          echo "HTTP $code"
+          cat response.json
+          echo
+
+          if [ "$code" != "200" ]; then
+            echo "::error::Poll failed with HTTP $code"
+            exit 1
+          fi
+
+          # A 200 that reports engine errors still deserves a visible warning.
+          if grep -q '"errors":\[[^]]' response.json; then
+            echo "::warning::Poll succeeded but the engine reported errors (see response above)."
+          fi
