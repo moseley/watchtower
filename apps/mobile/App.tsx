@@ -2,7 +2,7 @@ import { WeatherWatchConfigSchema } from "@watchtower/types";
 import { StatusBar } from "expo-status-bar";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -33,6 +33,9 @@ type Metric = "temperature" | "precipitation_probability" | "wind_speed";
 type Comparator = "below" | "above";
 
 const MUSIC_LIMIT = 5;
+
+/** Cap on waiting for a GPS fix before falling back to the last known one. */
+const LOCATION_TIMEOUT_MS = 8000;
 
 const METRICS: { key: Metric; label: string }[] = [
   { key: "temperature", label: "Temperature" },
@@ -68,6 +71,9 @@ export default function App() {
   const [locationText, setLocationText] = useState("");
   const [locationEdited, setLocationEdited] = useState(false);
   const [locating, setLocating] = useState(false);
+  // Tracks whether the user has typed a location, so a late-arriving GPS fix
+  // doesn't overwrite what they entered.
+  const userTypedRef = useRef(false);
   const [metric, setMetric] = useState<Metric>("temperature");
   const [comparator, setComparator] = useState<Comparator>("below");
   const [threshold, setThreshold] = useState("35");
@@ -117,12 +123,32 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [lastPush]);
 
-  async function useCurrentLocation() {
+  async function useCurrentLocation({ explicit = false } = {}) {
+    // An explicit tap on the pin means the user wants GPS to win.
+    if (explicit) userTypedRef.current = false;
     setLocating(true);
     try {
       const { status: perm } = await Location.requestForegroundPermissionsAsync();
-      if (perm !== "granted") return;
-      const pos = await Location.getCurrentPositionAsync({});
+      if (perm !== "granted") {
+        if (explicit) setStatus("Location permission denied — type a city or zip instead.");
+        return;
+      }
+
+      // getCurrentPositionAsync has no timeout option and will wait forever if
+      // the device can't get a fix, so cap it and fall back to a cached fix.
+      const pos =
+        (await Promise.race([
+          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), LOCATION_TIMEOUT_MS)),
+        ])) ?? (await Location.getLastKnownPositionAsync({ maxAge: 10 * 60 * 1000 }));
+
+      if (!pos) {
+        if (explicit) setStatus("Couldn't get a location fix — type a city or zip instead.");
+        return;
+      }
+      // Don't clobber a location the user typed while we were waiting.
+      if (userTypedRef.current) return;
+
       const { latitude, longitude } = pos.coords;
       setCoords({ latitude, longitude });
       try {
@@ -133,7 +159,7 @@ export default function App() {
       }
       setLocationEdited(false);
     } catch {
-      // location optional — user can type a city/zip instead
+      if (explicit) setStatus("Couldn't get a location fix — type a city or zip instead.");
     } finally {
       setLocating(false);
     }
@@ -279,11 +305,13 @@ export default function App() {
 
   const thresholdProblem = thresholdError();
   const musicFull = musicCount >= MUSIC_LIMIT;
+  // Deliberately not gated on `locating`: a typed city needs no GPS, so a slow
+  // or failed fix must never block creating a watch.
   const canCreate =
     Boolean(ownerId) &&
     !busy &&
     (source === "weather"
-      ? !locating && !thresholdProblem && locationText.trim() !== ""
+      ? !thresholdProblem && locationText.trim() !== ""
       : Boolean(artist) && !musicFull);
 
   return (
@@ -322,13 +350,18 @@ export default function App() {
                   style={[styles.input, styles.locationInput]}
                   value={locationText}
                   onChangeText={(text) => {
+                    userTypedRef.current = true;
                     setLocationText(text);
                     setLocationEdited(true);
                   }}
                   placeholder="e.g. Honolulu or 96815"
                   placeholderTextColor="#475569"
                 />
-                <Pressable style={styles.iconButton} onPress={useCurrentLocation} disabled={locating}>
+                <Pressable
+                  style={styles.iconButton}
+                  onPress={() => useCurrentLocation({ explicit: true })}
+                  disabled={locating}
+                >
                   {locating ? (
                     <ActivityIndicator color="#fff" size="small" />
                   ) : (

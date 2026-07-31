@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Logo } from "./components/Logo";
 
 type Source = "weather" | "music";
@@ -29,6 +29,9 @@ interface ArtistHit {
 
 const OWNER_KEY = "watchtower.ownerId";
 const MUSIC_LIMIT = 5;
+
+/** Cap on waiting for a geolocation fix; the browser default is Infinity. */
+const LOCATION_TIMEOUT_MS = 8000;
 
 const METRICS: { key: Metric; label: string }[] = [
   { key: "temperature", label: "Temperature" },
@@ -86,6 +89,9 @@ export default function Home() {
   const [locationText, setLocationText] = useState("");
   const [locationEdited, setLocationEdited] = useState(false);
   const [locating, setLocating] = useState(false);
+  // Tracks whether the user has typed a location, so a late-arriving fix
+  // doesn't overwrite what they entered.
+  const userTypedRef = useRef(false);
   const [metric, setMetric] = useState<Metric>("temperature");
   const [comparator, setComparator] = useState<Comparator>("below");
   const [threshold, setThreshold] = useState("35");
@@ -156,11 +162,16 @@ export default function Home() {
     }
   }
 
-  function useCurrentLocation() {
+  function useCurrentLocation({ explicit = false } = {}) {
     if (!("geolocation" in navigator)) return;
+    // An explicit click on the pin means the user wants GPS to win.
+    if (explicit) userTypedRef.current = false;
     setLocating(true);
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
+        setLocating(false);
+        // Don't clobber a location the user typed while we were waiting.
+        if (userTypedRef.current) return;
         const { latitude, longitude } = pos.coords;
         setCoords({ latitude, longitude });
         try {
@@ -172,9 +183,13 @@ export default function Home() {
           setLocationText("Current location");
         }
         setLocationEdited(false);
-        setLocating(false);
       },
-      () => setLocating(false),
+      () => {
+        setLocating(false);
+        if (explicit) setStatus("Couldn't get your location — type a city or zip instead.");
+      },
+      // The default timeout is Infinity, which can leave this pending forever.
+      { timeout: LOCATION_TIMEOUT_MS, maximumAge: 10 * 60 * 1000 },
     );
   }
 
@@ -316,11 +331,13 @@ export default function Home() {
 
   const thresholdProblem = thresholdError();
   const musicFull = musicCount >= MUSIC_LIMIT;
+  // Deliberately not gated on `locating`: a typed city needs no GPS, so a slow
+  // or failed fix must never block creating a watch.
   const canCreate =
     Boolean(ownerId) &&
     !busy &&
     (source === "weather"
-      ? !locating && !thresholdProblem && locationText.trim() !== ""
+      ? !thresholdProblem && locationText.trim() !== ""
       : Boolean(artist) && !musicFull);
 
   const inputClass =
@@ -380,6 +397,7 @@ export default function Home() {
                   className={inputClass}
                   value={locationText}
                   onChange={(e) => {
+                    userTypedRef.current = true;
                     setLocationText(e.target.value);
                     setLocationEdited(true);
                   }}
@@ -388,7 +406,7 @@ export default function Home() {
                 />
                 <button
                   className="rounded-lg bg-slate-700 px-4 hover:bg-slate-600 disabled:opacity-50"
-                  onClick={useCurrentLocation}
+                  onClick={() => useCurrentLocation({ explicit: true })}
                   disabled={!ownerId || locating}
                   title="Use current location"
                 >
