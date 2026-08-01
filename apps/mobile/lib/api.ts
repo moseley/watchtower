@@ -24,11 +24,22 @@ function post<T>(path: string, body: unknown): Promise<T> {
   });
 }
 
-export function registerDevice(expoPushToken: string, platform: "ios" | "android") {
+export function registerDevice(
+  expoPushToken: string,
+  platform: "ios" | "android",
+  ownerId?: string,
+) {
   return post<{ ownerId: string; deviceId: string }>("/api/devices/register", {
     expoPushToken,
     platform,
+    ...(ownerId ? { ownerId } : {}),
   });
+}
+
+/** Create an identity with no push destination, for use before (or without)
+ *  notification permission. */
+export function createOwner() {
+  return post<{ ownerId: string }>("/api/owners", {});
 }
 
 export function createWatch(input: CreateWatchInput & { ownerId: string }) {

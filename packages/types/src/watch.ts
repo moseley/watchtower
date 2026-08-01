@@ -48,9 +48,16 @@ export const DeviceRegistrationSchema = z.union([
   z.object({
     expoPushToken: z.string().min(1),
     platform: z.enum(["ios", "android"]).optional(),
+    /**
+     * Attach this device to an existing owner. Sent when the app already has an
+     * identity — someone who declined notifications, used the app, then enabled
+     * them later — so their watches don't end up stranded under a new owner.
+     */
+    ownerId: z.string().optional(),
   }),
   z.object({
     webPushSubscription: WebPushSubscriptionSchema,
+    ownerId: z.string().optional(),
   }),
 ]);
 export type DeviceRegistration = z.infer<typeof DeviceRegistrationSchema>;

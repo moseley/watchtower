@@ -864,10 +864,20 @@ export default function Home() {
           )}
         </div>
 
-        <p className="mt-10 text-xs text-slate-600">
-          Watches are checked every ~15 minutes. Web and mobile keep separate watch lists until
-          accounts arrive.
-        </p>
+        <footer className="mt-10 space-y-2 text-xs text-slate-600">
+          <p>
+            Watches are checked every ~15 minutes. Web and mobile keep separate watch lists until
+            accounts arrive.
+          </p>
+          <p>
+            Weather by Open-Meteo · Music data by MusicBrainz · Reverse geocoding by BigDataCloud
+          </p>
+          <p>
+            <a href="/privacy" className="text-slate-500 underline hover:text-slate-300">
+              Privacy
+            </a>
+          </p>
+        </footer>
       </div>
     </main>
   );

@@ -5,6 +5,7 @@ import * as Notifications from "expo-notifications";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -15,6 +16,7 @@ import {
   View,
 } from "react-native";
 import {
+  createOwner,
   createWatch,
   deleteWatch,
   geocode,
@@ -28,7 +30,9 @@ import {
   type NotificationRow,
   type WatchRow,
 } from "./lib/api";
-import { registerForPushNotificationsAsync } from "./lib/push";
+import { getExpoPushToken } from "./lib/push";
+import { API_URL } from "./lib/config";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Logo } from "./components/Logo";
 
 type Source = "weather" | "music";
@@ -45,6 +49,9 @@ type ListView = "watches" | "history";
 
 /** How many alerts to show at a time before "View more". */
 const HISTORY_PAGE = 10;
+
+/** Local identity, so declining notifications doesn't cost the user their watches. */
+const OWNER_KEY = "watchtower.ownerId";
 
 /** Roughly the same temperature in each scale, so the default reads sensibly. */
 const DEFAULT_THRESHOLD: Record<TempUnit, string> = { F: "85", C: "29" };
@@ -111,6 +118,7 @@ export default function App() {
   const [source, setSource] = useState<Source>("weather");
   const [watches, setWatches] = useState<WatchRow[]>([]);
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
+  const [pushEnabled, setPushEnabled] = useState(true);
   const [listView, setListView] = useState<ListView>("watches");
   const [historyLimit, setHistoryLimit] = useState(HISTORY_PAGE);
   // Lets a tapped notification scroll straight to the history instead of
@@ -158,15 +166,30 @@ export default function App() {
 
     (async () => {
       try {
-        setStatus("Registering for notifications…");
-        const token = await registerForPushNotificationsAsync();
-        const platform = Platform.OS === "ios" ? "ios" : "android";
-        const reg = await registerDevice(token, platform);
-        currentOwner = reg.ownerId;
-        setOwnerId(reg.ownerId);
-        setStatus("Registered ✓");
-        await refreshWatches(reg.ownerId);
-        await refreshNotifications(reg.ownerId);
+        // Reuse the stored identity so declining notifications, or reinstalling
+        // the token, never orphans the watches already created.
+        let id = await AsyncStorage.getItem(OWNER_KEY);
+
+        // Read the existing permission without prompting — the prompt belongs
+        // behind the button, not on first launch.
+        const push = await getExpoPushToken({ request: false });
+        if (push.ok) {
+          const platform = Platform.OS === "ios" ? "ios" : "android";
+          const reg = await registerDevice(push.token, platform, id ?? undefined);
+          id = reg.ownerId;
+          setPushEnabled(true);
+        } else if (!id) {
+          id = (await createOwner()).ownerId;
+        }
+
+        if (id) {
+          await AsyncStorage.setItem(OWNER_KEY, id);
+          currentOwner = id;
+          setOwnerId(id);
+          setStatus("");
+          await refreshWatches(id);
+          await refreshNotifications(id);
+        }
       } catch (err) {
         setStatus(`Setup failed: ${(err as Error).message}`);
       }
@@ -252,6 +275,34 @@ export default function App() {
       setWatches(await listWatches(id));
     } catch {
       // ignore list errors
+    }
+  }
+
+  /** Ask for notification permission, then attach this device to our identity. */
+  async function enableNotifications() {
+    setBusy(true);
+    try {
+      const push = await getExpoPushToken({ request: true });
+      if (!push.ok) {
+        setStatus(
+          push.reason === "denied"
+            ? "Notifications are off. Turn them on in Settings › Watchtower › Notifications."
+            : (push.message ?? "Couldn't turn on notifications."),
+        );
+        return;
+      }
+      const platform = Platform.OS === "ios" ? "ios" : "android";
+      const reg = await registerDevice(push.token, platform, ownerId ?? undefined);
+      await AsyncStorage.setItem(OWNER_KEY, reg.ownerId);
+      setOwnerId(reg.ownerId);
+      setPushEnabled(true);
+      setStatus("Notifications on ✓");
+      await refreshWatches(reg.ownerId);
+      await refreshNotifications(reg.ownerId);
+    } catch (err) {
+      setStatus(`Couldn't turn on notifications: ${(err as Error).message}`);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -476,6 +527,25 @@ export default function App() {
         {lastPush && (
           <View style={styles.pushBanner}>
             <Text style={styles.pushBannerText}>🔔 {lastPush}</Text>
+          </View>
+        )}
+
+        {!pushEnabled && (
+          <View style={styles.noticeCard}>
+            <Text style={styles.noticeTitle}>Notifications are off</Text>
+            <Text style={styles.noticeBody}>
+              You can still set up watches — they just won&apos;t reach you until notifications
+              are on.
+            </Text>
+            <Pressable
+              style={styles.noticeButton}
+              onPress={enableNotifications}
+              disabled={busy}
+            >
+              <Text style={styles.noticeButtonText}>
+                {busy ? "Working…" : "Turn on notifications"}
+              </Text>
+            </Pressable>
           </View>
         )}
 
@@ -779,6 +849,18 @@ export default function App() {
             )}
           </>
         )}
+
+        <View style={styles.footer}>
+          <Text style={styles.footerText}>
+            Weather by Open-Meteo · Music data by MusicBrainz · Reverse geocoding by BigDataCloud
+          </Text>
+          <Text
+            style={styles.footerLink}
+            onPress={() => Linking.openURL(`${API_URL}/privacy`)}
+          >
+            Privacy
+          </Text>
+        </View>
       </ScrollView>
     </View>
   );
@@ -809,6 +891,22 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 14, color: "#94A3B8", marginTop: 4 },
   pushBanner: { backgroundColor: "#1D4ED8", borderRadius: 12, padding: 14, marginBottom: 16 },
   pushBannerText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  noticeCard: {
+    backgroundColor: "#422006",
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+  },
+  noticeTitle: { color: "#FDE68A", fontSize: 15, fontWeight: "700" },
+  noticeBody: { color: "#FCD34D", fontSize: 13, marginTop: 4, lineHeight: 18 },
+  noticeButton: {
+    backgroundColor: "#B45309",
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: "center",
+    marginTop: 12,
+  },
+  noticeButtonText: { color: "#fff", fontWeight: "700", fontSize: 14 },
   card: { backgroundColor: "#1E293B", borderRadius: 16, padding: 18 },
   tabRow: { flexDirection: "row", gap: 8, marginBottom: 4 },
   tab: { flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: "center" },
@@ -898,6 +996,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#1E293B",
   },
   viewMoreText: { color: "#94A3B8", fontWeight: "600", fontSize: 14 },
+  footer: { marginTop: 32, gap: 8 },
+  footerText: { color: "#475569", fontSize: 11, lineHeight: 16 },
+  footerLink: { color: "#64748B", fontSize: 11, textDecorationLine: "underline" },
   empty: { color: "#64748B" },
   watchRow: {
     backgroundColor: "#1E293B",

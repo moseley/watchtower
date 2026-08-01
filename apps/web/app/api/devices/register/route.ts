@@ -3,9 +3,21 @@ import { DeviceRegistrationSchema } from "@watchtower/types";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Decide which owner a brand-new device belongs to. If the client already has
+ * an identity it keeps it, so enabling notifications after using the app for a
+ * while doesn't strand the watches that were already created.
+ */
+async function ownerConnection(ownerId: string | undefined) {
+  if (ownerId) {
+    const existing = await prisma.owner.findUnique({ where: { id: ownerId } });
+    if (existing) return { connect: { id: existing.id } };
+  }
+  return { create: {} };
+}
+
 // Register a push destination: a phone (Expo push token) or a browser
-// (Web Push subscription). Brand-new devices get a fresh Owner (Phase 1
-// identity — no login). Returns the ids the client stores locally.
+// (Web Push subscription). Returns the ids the client stores locally.
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const parsed = DeviceRegistrationSchema.safeParse(body);
@@ -17,7 +29,7 @@ export async function POST(request: Request) {
   }
 
   if ("expoPushToken" in parsed.data) {
-    const { expoPushToken, platform } = parsed.data;
+    const { expoPushToken, platform, ownerId } = parsed.data;
     const existing = await prisma.device.findUnique({ where: { expoPushToken } });
     const device = existing
       ? await prisma.device.update({
@@ -29,13 +41,13 @@ export async function POST(request: Request) {
             kind: "expo",
             expoPushToken,
             ...(platform ? { platform } : {}),
-            owner: { create: {} },
+            owner: await ownerConnection(ownerId),
           },
         });
     return Response.json({ ownerId: device.ownerId, deviceId: device.id });
   }
 
-  const subscription = parsed.data.webPushSubscription;
+  const { webPushSubscription: subscription, ownerId } = parsed.data;
   const subscriptionJson = subscription as unknown as Prisma.InputJsonValue;
   const existing = await prisma.device.findUnique({
     where: { webPushEndpoint: subscription.endpoint },
@@ -51,7 +63,7 @@ export async function POST(request: Request) {
           webPushEndpoint: subscription.endpoint,
           webPushSubscription: subscriptionJson,
           platform: "web",
-          owner: { create: {} },
+          owner: await ownerConnection(ownerId),
         },
       });
   return Response.json({ ownerId: device.ownerId, deviceId: device.id });
