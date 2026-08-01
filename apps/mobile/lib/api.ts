@@ -63,6 +63,11 @@ export interface WatchRow {
     artist?: { name?: string; mbid?: string };
     includeSingles?: boolean;
   };
+  // Already returned by /api/watches — the list route selects no subset, so
+  // every scalar column comes back. Typing them here surfaces what is there.
+  createdAt?: string;
+  lastCheckedAt?: string | null;
+  lastMatchedAt?: string | null;
 }
 
 export interface ArtistHit {

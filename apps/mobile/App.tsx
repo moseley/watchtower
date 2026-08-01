@@ -1,20 +1,48 @@
+import {
+  IBMPlexMono_400Regular,
+  IBMPlexMono_600SemiBold,
+} from "@expo-google-fonts/ibm-plex-mono";
+import {
+  SpaceGrotesk_400Regular,
+  SpaceGrotesk_500Medium,
+  SpaceGrotesk_600SemiBold,
+  SpaceGrotesk_700Bold,
+} from "@expo-google-fonts/space-grotesk";
 import { WeatherWatchConfigSchema } from "@watchtower/types";
-import { StatusBar } from "expo-status-bar";
+import { useFonts } from "expo-font";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
+import { StatusBar } from "expo-status-bar";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Switch,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { Logo } from "./components/Logo";
+import { TabBar, type ListView } from "./components/TabBar";
+import { WatchCard } from "./components/WatchCard";
+import {
+  AudioLines,
+  CloudSun,
+  Crosshair,
+  Info,
+  Layers,
+  Plus,
+  Search,
+  X,
+  watchIcon,
+} from "./components/icons";
+import { Button, FieldLabel, SegmentedControl, TextField } from "./components/primitives";
+import { cardShadow, colors, fonts, radius } from "./components/theme";
+import { timeAgo } from "./components/watch-display";
 import {
   createOwner,
   createWatch,
@@ -30,14 +58,14 @@ import {
   type NotificationRow,
   type WatchRow,
 } from "./lib/api";
-import { getExpoPushToken } from "./lib/push";
 import { API_URL } from "./lib/config";
+import { getExpoPushToken } from "./lib/push";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Logo } from "./components/Logo";
 
 type Source = "weather" | "music";
 type Metric = "temperature" | "precipitation_probability" | "wind_speed";
 type Comparator = "below" | "above";
+type SourceFilter = "all" | "weather" | "music";
 
 const MUSIC_LIMIT = 5;
 
@@ -45,7 +73,6 @@ const MUSIC_LIMIT = 5;
 const LOCATION_TIMEOUT_MS = 8000;
 
 type TempUnit = "F" | "C";
-type ListView = "watches" | "history";
 
 /** How many alerts to show at a time before "View more". */
 const HISTORY_PAGE = 10;
@@ -59,10 +86,10 @@ const DEFAULT_THRESHOLD: Record<TempUnit, string> = { F: "85", C: "29" };
 const fahrenheitToCelsius = (f: number) => Math.round(((f - 32) * 5) / 9);
 const celsiusToFahrenheit = (c: number) => Math.round((c * 9) / 5 + 32);
 
-const METRICS: { key: Metric; label: string }[] = [
-  { key: "temperature", label: "Temperature" },
-  { key: "precipitation_probability", label: "Rain %" },
-  { key: "wind_speed", label: "Wind" },
+const METRIC_OPTIONS: { value: Metric; label: string }[] = [
+  { value: "temperature", label: "Temp" },
+  { value: "precipitation_probability", label: "Rain %" },
+  { value: "wind_speed", label: "Wind" },
 ];
 
 const METRIC_NAMES: Record<Metric, string> = {
@@ -71,62 +98,32 @@ const METRIC_NAMES: Record<Metric, string> = {
   wind_speed: "wind",
 };
 
-function timeAgo(iso: string): string {
-  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}
-
-function iconForSource(source: string, title: string): string {
-  if (source === "music") return "🎤";
-  const leading = Array.from(title)[0];
-  // The engine already picks a fitting emoji per alert; reuse it when present.
-  return leading && /\p{Extended_Pictographic}/u.test(leading) ? leading : "🔔";
-}
-
-/** e.g. "temperature above 85°F", "rain above 60%" */
-function describeRule(w: WatchRow): string {
-  if (w.source === "music") {
-    return w.config.includeSingles ? "new albums, EPs & singles" : "new albums & EPs";
-  }
-  const rule = w.config.rule;
-  if (!rule) return "";
-  const suffix =
-    rule.metric === "temperature"
-      ? `°${rule.unit ?? "F"}`
-      : rule.metric === "precipitation_probability"
-        ? "%"
-        : ` ${rule.unit ?? "mph"}`;
-  return `${rule.metric?.replace(/_/g, " ")} ${rule.comparator} ${rule.threshold}${suffix}`;
-}
-
-function iconFor(w: WatchRow): string {
-  if (w.source === "music") return "🎤";
-  const rule = w.config.rule;
-  if (rule?.metric === "temperature") return rule.comparator === "below" ? "❄️" : "☀️";
-  if (rule?.metric === "precipitation_probability") return "🌧️";
-  if (rule?.metric === "wind_speed") return "💨";
-  return "🔔";
-}
-
 export default function App() {
+  const [fontsLoaded] = useFonts({
+    SpaceGrotesk_400Regular,
+    SpaceGrotesk_500Medium,
+    SpaceGrotesk_600SemiBold,
+    SpaceGrotesk_700Bold,
+    IBMPlexMono_400Regular,
+    IBMPlexMono_600SemiBold,
+  });
+
   const [ownerId, setOwnerId] = useState<string | null>(null);
-  const [status, setStatus] = useState("Starting…");
+  const [status, setStatus] = useState("");
   const [source, setSource] = useState<Source>("weather");
   const [watches, setWatches] = useState<WatchRow[]>([]);
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
   const [pushEnabled, setPushEnabled] = useState(true);
   const [listView, setListView] = useState<ListView>("watches");
   const [historyLimit, setHistoryLimit] = useState(HISTORY_PAGE);
-  // Lets a tapped notification scroll straight to the history instead of
-  // dropping the user on the form with no explanation.
   const scrollRef = useRef<ScrollView>(null);
-  const historyYRef = useRef(0);
   const [busy, setBusy] = useState(false);
   const [lastPush, setLastPush] = useState<string | null>(null);
+
+  // presentation only — which sources the list shows, and whether the builder
+  // sheet is open. Neither touches what is fetched or how a watch is made.
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [builderOpen, setBuilderOpen] = useState(false);
 
   // weather form
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -178,8 +175,9 @@ export default function App() {
           const reg = await registerDevice(push.token, platform, id ?? undefined);
           id = reg.ownerId;
           setPushEnabled(true);
-        } else if (!id) {
-          id = (await createOwner()).ownerId;
+        } else {
+          setPushEnabled(false);
+          if (!id) id = (await createOwner()).ownerId;
         }
 
         if (id) {
@@ -208,10 +206,7 @@ export default function App() {
         if (currentOwner) void refreshNotifications(currentOwner);
         setListView("history");
         setHistoryLimit(HISTORY_PAGE);
-        setTimeout(
-          () => scrollRef.current?.scrollTo({ y: historyYRef.current, animated: true }),
-          300,
-        );
+        setTimeout(() => scrollRef.current?.scrollTo({ y: 0, animated: true }), 200);
       });
     })();
 
@@ -296,7 +291,7 @@ export default function App() {
       await AsyncStorage.setItem(OWNER_KEY, reg.ownerId);
       setOwnerId(reg.ownerId);
       setPushEnabled(true);
-      setStatus("Notifications on ✓");
+      setStatus("Notifications on");
       await refreshWatches(reg.ownerId);
       await refreshNotifications(reg.ownerId);
     } catch (err) {
@@ -478,8 +473,9 @@ export default function App() {
     try {
       if (source === "weather") await createWeatherWatch(ownerId);
       else await createMusicWatch(ownerId);
-      setStatus("Watch created ✓");
+      setStatus("Watch created");
       await refreshWatches(ownerId);
+      setBuilderOpen(false);
     } catch (err) {
       setStatus(`${(err as Error).message}`);
     } finally {
@@ -508,25 +504,74 @@ export default function App() {
       ? !thresholdProblem && locationText.trim() !== ""
       : Boolean(artist) && !musicFull);
 
+  const counts = {
+    all: watches.length,
+    weather: watches.filter((w) => w.source === "weather").length,
+    music: musicCount,
+  };
+  const visibleWatches =
+    sourceFilter === "all" ? watches : watches.filter((w) => w.source === sourceFilter);
+
+  const heading =
+    listView === "watches" ? "Watches" : listView === "history" ? "History" : "You";
+
+  /** Plain restatement of the rule being built. */
+  function rulePreview(): string | null {
+    if (source === "music") {
+      if (!artist) return null;
+      return `You'll be alerted when ${artist.name} releases ${
+        includeSingles ? "an album, EP or single" : "an album or EP"
+      }.`;
+    }
+    const place = locationText.trim();
+    if (!place || thresholdProblem) return null;
+    if (metric === "temperature") {
+      return `You'll be alerted when the temperature in ${place} goes ${comparator} ${threshold}°${tempUnit}.`;
+    }
+    if (metric === "precipitation_probability") {
+      return `You'll be alerted when the chance of rain in ${place} goes above ${threshold}%.`;
+    }
+    return `You'll be alerted when wind in ${place} goes above ${threshold} mph.`;
+  }
+
+  const preview = rulePreview();
+
+  // Hold the canvas colour while the typefaces load so the app doesn't flash
+  // system-font text and then reflow.
+  if (!fontsLoaded) return <View style={styles.root} />;
+
   return (
     <View style={styles.root}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
+
       <ScrollView
         ref={scrollRef}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.header}>
-          <Logo size={52} />
-          <View style={styles.headerText}>
-            <Text style={styles.title}>Watchtower</Text>
-            <Text style={styles.subtitle}>{status}</Text>
+          <View style={styles.headerLeft}>
+            {listView === "watches" && <Logo size={34} />}
+            <Text style={styles.title}>{heading}</Text>
           </View>
+          {listView === "watches" && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="New watch"
+              onPress={() => {
+                setStatus("");
+                setBuilderOpen(true);
+              }}
+              style={styles.addButton}
+            >
+              <Plus size={19} color="#FFFFFF" />
+            </Pressable>
+          )}
         </View>
 
         {lastPush && (
           <View style={styles.pushBanner}>
-            <Text style={styles.pushBannerText}>🔔 {lastPush}</Text>
+            <Text style={styles.pushBannerText}>{lastPush}</Text>
           </View>
         )}
 
@@ -537,482 +582,630 @@ export default function App() {
               You can still set up watches — they just won&apos;t reach you until notifications
               are on.
             </Text>
-            <Pressable
-              style={styles.noticeButton}
+            <Button
+              label="Turn on notifications"
               onPress={enableNotifications}
-              disabled={busy}
-            >
-              <Text style={styles.noticeButtonText}>
-                {busy ? "Working…" : "Turn on notifications"}
-              </Text>
-            </Pressable>
+              busy={busy}
+              style={styles.noticeButton}
+            />
           </View>
         )}
 
-        <View style={styles.card}>
-          <View style={styles.tabRow}>
-            <Tab
-              label="🌤️ Weather"
-              active={source === "weather"}
-              onPress={() => setSource("weather")}
-            />
-            <Tab label="🎤 Music" active={source === "music"} onPress={() => setSource("music")} />
-          </View>
+        {status !== "" && <Text style={styles.status}>{status}</Text>}
 
-          {source === "weather" ? (
-            <>
-              <Text style={styles.fieldLabel}>Location (city or zip code)</Text>
-              <View style={styles.locationRow}>
-                <TextInput
-                  style={[styles.input, styles.locationInput]}
-                  value={locationText}
-                  onChangeText={(text) => {
-                    userTypedRef.current = true;
-                    setLocationText(text);
-                    setLocationEdited(true);
-                  }}
-                  placeholder="e.g. Honolulu or 96815"
-                  placeholderTextColor="#475569"
-                />
-                <Pressable
-                  style={styles.iconButton}
-                  onPress={() => useCurrentLocation({ explicit: true })}
-                  disabled={locating}
-                >
-                  {locating ? (
-                    <ActivityIndicator color="#fff" size="small" />
-                  ) : (
-                    <Text style={styles.iconButtonText}>📍</Text>
-                  )}
-                </Pressable>
-              </View>
-              {coords && !locationEdited && (
-                <Text style={styles.confirmedHint}>
-                  ✓ {locationText} ({coords.latitude.toFixed(3)}, {coords.longitude.toFixed(3)})
-                </Text>
-              )}
-              {locationEdited &&
-                locationHits.map((place) => (
-                  <Pressable
-                    key={`${place.latitude},${place.longitude}`}
-                    style={styles.hitRow}
-                    onPress={() => {
-                      setCoords({ latitude: place.latitude, longitude: place.longitude });
-                      setLocationText(place.label);
-                      setLocationEdited(false);
-                      setLocationHits([]);
-                    }}
-                  >
-                    <Text style={styles.watchIcon}>📍</Text>
-                    <View style={styles.watchBody}>
-                      <Text style={styles.hitName}>{place.label}</Text>
-                    </View>
-                    <Text style={styles.watchMeta}>select</Text>
-                  </Pressable>
-                ))}
-              {locationEdited && locationHits.length === 0 && (
-                <Text style={styles.hint}>
-                  {searchingLocation
-                    ? "Looking up…"
-                    : locationText.trim().length < 2
-                      ? "Type a city or zip code"
-                      : "No match yet — the closest one is used when you create the watch"}
-                </Text>
-              )}
-
-              <Text style={styles.fieldLabel}>Metric</Text>
-              <View style={styles.chipRow}>
-                {METRICS.map((m) => (
-                  <Chip
-                    key={m.key}
-                    label={m.label}
-                    active={metric === m.key}
-                    onPress={() => setMetric(m.key)}
-                  />
-                ))}
-              </View>
-
-              {metric === "temperature" && (
-                <>
-                  <Text style={styles.fieldLabel}>When it goes</Text>
-                  <View style={styles.chipRow}>
-                    <Chip
-                      label="❄️ Below"
-                      active={comparator === "below"}
-                      onPress={() => setComparator("below")}
-                    />
-                    <Chip
-                      label="☀️ Above"
-                      active={comparator === "above"}
-                      onPress={() => setComparator("above")}
-                    />
-                  </View>
-                </>
-              )}
-
-              {metric === "temperature" && (
-                <>
-                  <Text style={styles.fieldLabel}>Units</Text>
-                  <View style={styles.chipRow}>
-                    <Chip
-                      label="°F"
-                      active={tempUnit === "F"}
-                      onPress={() => switchTempUnit("F")}
-                    />
-                    <Chip
-                      label="°C"
-                      active={tempUnit === "C"}
-                      onPress={() => switchTempUnit("C")}
-                    />
-                  </View>
-                </>
-              )}
-
-              <Text style={styles.fieldLabel}>
-                Threshold{" "}
-                {metric === "temperature"
-                  ? `(°${tempUnit})`
-                  : metric === "wind_speed"
-                    ? "(mph)"
-                    : "(0–100 %)"}
-              </Text>
-              <TextInput
-                style={[styles.input, thresholdProblem ? styles.inputError : null]}
-                value={threshold}
-                onChangeText={setThreshold}
-                keyboardType="numeric"
-                placeholder={metric === "temperature" ? DEFAULT_THRESHOLD[tempUnit] : "35"}
-                placeholderTextColor="#475569"
-              />
-              {thresholdProblem && <Text style={styles.errorHint}>{thresholdProblem}</Text>}
-            </>
-          ) : (
-            <>
-              <View style={styles.labelRow}>
-                <Text style={styles.fieldLabel}>Search for an artist or band</Text>
-                <Text style={styles.counter}>
-                  {musicCount} / {MUSIC_LIMIT} watched
-                </Text>
-              </View>
-              <View style={styles.searchWrap}>
-                <TextInput
-                  style={[styles.input, styles.searchInput]}
-                  value={artistQuery}
-                  onChangeText={setArtistQuery}
-                  autoCorrect={false}
-                  autoCapitalize="words"
-                  returnKeyType="search"
-                  placeholder="Start typing a name…"
-                  placeholderTextColor="#475569"
-                />
-                {searching && (
-                  <ActivityIndicator style={styles.searchSpinner} color="#60A5FA" size="small" />
-                )}
-              </View>
-              {noResults && !artist && (
-                <Text style={styles.hint}>No artists found for &ldquo;{artistQuery.trim()}&rdquo;.</Text>
-              )}
-
-              {artist ? (
-                <View style={styles.selectedArtist}>
-                  <Text style={styles.watchIcon}>🎤</Text>
-                  <View style={styles.watchBody}>
-                    <Text style={styles.watchLabel}>{artist.name}</Text>
-                    {artist.disambiguation && (
-                      <Text style={styles.watchMeta}>{artist.disambiguation}</Text>
-                    )}
-                  </View>
-                  <Pressable onPress={() => setArtist(null)}>
-                    <Text style={styles.changeLink}>change</Text>
-                  </Pressable>
-                </View>
-              ) : (
-                artistHits.map((a) => (
-                  <Pressable
-                    key={a.mbid}
-                    style={styles.hitRow}
-                    onPress={() => {
-                      setArtist(a);
-                      setArtistHits([]);
-                    }}
-                  >
-                    <View style={styles.watchBody}>
-                      <Text style={styles.hitName}>{a.name}</Text>
-                      <Text style={styles.watchMeta}>
-                        {[a.disambiguation, a.type, a.country].filter(Boolean).join(" · ") ||
-                          "artist"}
-                      </Text>
-                    </View>
-                    <Text style={styles.watchMeta}>select</Text>
-                  </Pressable>
-                ))
-              )}
-
-              <View style={styles.switchRow}>
-                <Switch
-                  value={includeSingles}
-                  onValueChange={setIncludeSingles}
-                  trackColor={{ true: "#2563EB", false: "#334155" }}
-                  thumbColor="#fff"
-                />
-                <Text style={styles.switchLabel}>Include singles</Text>
-              </View>
-              <Text style={styles.hint}>
-                Albums and EPs are always included. Singles can be frequent for busy artists.
-              </Text>
-
-              {musicFull && (
-                <Text style={styles.warnHint}>
-                  You&apos;re watching {MUSIC_LIMIT} artists — delete one to add another.
-                </Text>
-              )}
-            </>
-          )}
-
-          <Pressable
-            style={[styles.button, !canCreate && styles.buttonDisabled]}
-            onPress={onCreate}
-            disabled={!canCreate}
-          >
-            {busy ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>Create watch</Text>
-            )}
-          </Pressable>
-        </View>
-
-        <View
-          style={styles.listTabRow}
-          onLayout={(e) => (historyYRef.current = e.nativeEvent.layout.y)}
-        >
-          <Tab
-            label={`Watches (${watches.length})`}
-            active={listView === "watches"}
-            onPress={() => setListView("watches")}
-          />
-          <Tab
-            label={`History (${notifications.length})`}
-            active={listView === "history"}
-            onPress={() => setListView("history")}
-          />
-        </View>
-
-        {listView === "watches" ? (
-          watches.length === 0 ? (
-            <Text style={styles.empty}>No watches yet.</Text>
-          ) : (
-            watches.map((w) => (
-              <View key={w.id} style={styles.watchRow}>
-                <Text style={styles.watchIcon}>{iconFor(w)}</Text>
-                <View style={styles.watchBody}>
-                  <Text style={styles.watchLabel}>
-                    {w.source === "music"
-                      ? (w.config.artist?.name ?? w.label)
-                      : (w.config.location?.label ?? w.label)}
-                  </Text>
-                  <Text style={styles.watchMeta}>{describeRule(w)}</Text>
-                </View>
-                <Pressable style={styles.deleteButton} onPress={() => onDelete(w.id)}>
-                  <Text style={styles.deleteIcon}>🗑️</Text>
-                </Pressable>
-              </View>
-            ))
-          )
-        ) : notifications.length === 0 ? (
-          <Text style={styles.empty}>
-            No alerts yet. They&apos;ll appear here as your watches fire.
-          </Text>
-        ) : (
+        {listView === "watches" && (
           <>
-            {notifications.slice(0, historyLimit).map((n) => (
-              <View key={n.id} style={styles.watchRow}>
-                <Text style={styles.watchIcon}>{iconForSource(n.source, n.title)}</Text>
-                <View style={styles.watchBody}>
-                  <Text style={styles.watchLabel}>{n.body}</Text>
-                  <Text style={styles.watchMeta}>
-                    {n.watchLabel} · {timeAgo(n.createdAt)}
-                    {n.status === "failed" ? " · not delivered" : ""}
-                  </Text>
-                </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.chipRow}
+            >
+              {(
+                [
+                  { value: "all", label: `All ${counts.all}`, icon: Layers },
+                  { value: "weather", label: "Weather", icon: CloudSun },
+                  { value: "music", label: "Music", icon: AudioLines },
+                ] as { value: SourceFilter; label: string; icon: typeof Layers }[]
+              ).map(({ value, label, icon: Icon }) => {
+                const active = sourceFilter === value;
+                return (
+                  <Pressable
+                    key={value}
+                    onPress={() => setSourceFilter(value)}
+                    style={[styles.chip, active && styles.chipActive]}
+                  >
+                    <Icon size={15} color={active ? "#FFFFFF" : colors.ink} />
+                    <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            {visibleWatches.length === 0 ? (
+              <Text style={styles.empty}>
+                {watches.length === 0 ? "No watches yet." : `No ${sourceFilter} watches yet.`}
+              </Text>
+            ) : (
+              <View style={styles.cardList}>
+                {visibleWatches.map((w) => (
+                  <WatchCard key={w.id} watch={w} onDelete={onDelete} />
+                ))}
               </View>
-            ))}
-            {notifications.length > historyLimit && (
-              <Pressable
-                style={styles.viewMore}
-                onPress={() => setHistoryLimit((n) => n + HISTORY_PAGE)}
-              >
-                <Text style={styles.viewMoreText}>
-                  View {Math.min(HISTORY_PAGE, notifications.length - historyLimit)} more
-                </Text>
-              </Pressable>
             )}
           </>
         )}
 
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            Weather by Open-Meteo · Music data by MusicBrainz · Reverse geocoding by BigDataCloud
-          </Text>
-          <Text
-            style={styles.footerLink}
-            onPress={() => Linking.openURL(`${API_URL}/privacy`)}
-          >
-            Privacy
-          </Text>
-        </View>
+        {listView === "history" && (
+          <View style={styles.cardList}>
+            {notifications.length === 0 ? (
+              <Text style={styles.empty}>
+                No alerts yet. They&apos;ll appear here as your watches fire.
+              </Text>
+            ) : (
+              <>
+                {notifications.slice(0, historyLimit).map((n) => {
+                  const Icon = watchIcon(n.source, undefined);
+                  return (
+                    <View key={n.id} style={styles.historyRow}>
+                      <Icon size={17} color={colors.faint} />
+                      <View style={styles.historyBody}>
+                        <Text style={styles.historyText}>{n.body}</Text>
+                        <Text style={styles.historyMeta}>
+                          {n.watchLabel} · {timeAgo(n.createdAt)}
+                          {n.status === "failed" ? " · not delivered" : ""}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })}
+                {notifications.length > historyLimit && (
+                  <Button
+                    variant="ghost"
+                    label={`View ${Math.min(HISTORY_PAGE, notifications.length - historyLimit)} more`}
+                    onPress={() => setHistoryLimit((n) => n + HISTORY_PAGE)}
+                  />
+                )}
+              </>
+            )}
+          </View>
+        )}
+
+        {listView === "settings" && (
+          <View style={styles.cardList}>
+            <View style={styles.panel}>
+              <Text style={styles.panelTitle}>Notifications</Text>
+              <Text style={styles.panelBody}>
+                {pushEnabled
+                  ? "This device is registered for alerts."
+                  : "Not registered yet — turn them on to start receiving alerts."}
+              </Text>
+              {!pushEnabled && (
+                <Button
+                  label="Turn on notifications"
+                  onPress={enableNotifications}
+                  busy={busy}
+                  style={styles.panelButton}
+                />
+              )}
+            </View>
+
+            <View style={styles.panel}>
+              <Text style={styles.panelTitle}>About</Text>
+              <Text style={styles.panelBody}>
+                Watches are checked every ~15 minutes. Web and mobile keep separate watch lists
+                until accounts arrive.
+              </Text>
+              <Text style={styles.credits}>
+                Weather by Open-Meteo · Music data by MusicBrainz · Reverse geocoding by
+                BigDataCloud
+              </Text>
+              <Text style={styles.link} onPress={() => Linking.openURL(`${API_URL}/privacy`)}>
+                Privacy
+              </Text>
+            </View>
+          </View>
+        )}
       </ScrollView>
+
+      <TabBar view={listView} onSelect={setListView} />
+
+      <Modal
+        visible={builderOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setBuilderOpen(false)}
+      >
+        <Pressable style={styles.backdrop} onPress={() => setBuilderOpen(false)} />
+        <View style={styles.sheet}>
+          <View style={styles.sheetHeader}>
+            <Text style={styles.sheetTitle}>New watch</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              onPress={() => setBuilderOpen(false)}
+              hitSlop={8}
+            >
+              <X size={20} color={colors.muted} />
+            </Pressable>
+          </View>
+
+          <ScrollView
+            contentContainerStyle={styles.sheetBody}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Source picker */}
+            <View style={styles.sourceGrid}>
+              {(
+                [
+                  { value: "weather", label: "Weather", icon: CloudSun },
+                  { value: "music", label: "Music", icon: AudioLines },
+                ] as { value: Source; label: string; icon: typeof CloudSun }[]
+              ).map(({ value, label, icon: Icon }) => {
+                const selected = source === value;
+                return (
+                  <Pressable
+                    key={value}
+                    onPress={() => setSource(value)}
+                    style={[styles.sourceTile, selected && styles.sourceTileSelected]}
+                  >
+                    <Icon size={17} color={selected ? colors.accent : colors.ink} />
+                    <Text style={[styles.sourceLabel, selected && styles.sourceLabelSelected]}>
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {source === "weather" ? (
+              <>
+                <View style={styles.field}>
+                  <FieldLabel>Location</FieldLabel>
+                  <View style={styles.row}>
+                    <View style={styles.inputWithIcon}>
+                      <Search size={16} color={colors.faint} style={styles.inputIcon} />
+                      <TextField
+                        value={locationText}
+                        onChangeText={(text) => {
+                          userTypedRef.current = true;
+                          setLocationText(text);
+                          setLocationEdited(true);
+                        }}
+                        placeholder="City or zip code"
+                        style={styles.inputPadded}
+                      />
+                    </View>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Use my location"
+                      onPress={() => useCurrentLocation({ explicit: true })}
+                      disabled={locating}
+                      style={styles.locateButton}
+                    >
+                      {locating ? (
+                        <ActivityIndicator size="small" color={colors.muted} />
+                      ) : (
+                        <Crosshair size={17} color={colors.muted} />
+                      )}
+                    </Pressable>
+                  </View>
+
+                  {coords && !locationEdited && (
+                    <Text style={styles.hint}>
+                      Using {coords.latitude.toFixed(3)}, {coords.longitude.toFixed(3)}
+                    </Text>
+                  )}
+
+                  {locationEdited &&
+                    locationHits.map((place) => (
+                      <Pressable
+                        key={`${place.latitude},${place.longitude}`}
+                        style={styles.suggestion}
+                        onPress={() => {
+                          setCoords({ latitude: place.latitude, longitude: place.longitude });
+                          setLocationText(place.label);
+                          setLocationEdited(false);
+                          setLocationHits([]);
+                        }}
+                      >
+                        <Text style={styles.suggestionText}>{place.label}</Text>
+                      </Pressable>
+                    ))}
+
+                  {locationEdited && locationHits.length === 0 && (
+                    <Text style={styles.hint}>
+                      {searchingLocation
+                        ? "Looking up…"
+                        : locationText.trim().length < 2
+                          ? "Type a city or zip code"
+                          : "No match yet — the closest one is used when you create the watch"}
+                    </Text>
+                  )}
+                </View>
+
+                <View style={styles.field}>
+                  <FieldLabel>Metric</FieldLabel>
+                  <SegmentedControl
+                    options={METRIC_OPTIONS}
+                    value={metric}
+                    onChange={setMetric}
+                  />
+                </View>
+
+                {metric === "temperature" && (
+                  <View style={styles.field}>
+                    <FieldLabel>Alert me when it goes</FieldLabel>
+                    <View style={styles.row}>
+                      {(["below", "above"] as Comparator[]).map((option) => {
+                        const selected = comparator === option;
+                        return (
+                          <Pressable
+                            key={option}
+                            onPress={() => setComparator(option)}
+                            style={[styles.choice, selected && styles.choiceSelected]}
+                          >
+                            <Text
+                              style={[styles.choiceText, selected && styles.choiceTextSelected]}
+                            >
+                              {option === "below" ? "Below" : "Above"}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </View>
+                )}
+
+                <View style={styles.field}>
+                  <FieldLabel>Threshold</FieldLabel>
+                  <View style={styles.row}>
+                    <View style={styles.flex1}>
+                      <TextField
+                        value={threshold}
+                        onChangeText={setThreshold}
+                        keyboardType="numeric"
+                        placeholder={metric === "temperature" ? "85" : "60"}
+                        invalid={Boolean(thresholdProblem)}
+                      />
+                    </View>
+                    {metric === "temperature" && (
+                      <View style={styles.unitToggle}>
+                        <SegmentedControl
+                          options={[
+                            { value: "F" as TempUnit, label: "°F" },
+                            { value: "C" as TempUnit, label: "°C" },
+                          ]}
+                          value={tempUnit}
+                          onChange={switchTempUnit}
+                        />
+                      </View>
+                    )}
+                  </View>
+                  {thresholdProblem && <Text style={styles.error}>{thresholdProblem}</Text>}
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={styles.field}>
+                  <View style={styles.labelRow}>
+                    <FieldLabel>Artist or band</FieldLabel>
+                    <Text style={styles.counter}>
+                      {musicCount} / {MUSIC_LIMIT}
+                    </Text>
+                  </View>
+
+                  {artist ? (
+                    <View style={styles.selectedArtist}>
+                      <AudioLines size={17} color={colors.accent} />
+                      <View style={styles.flex1}>
+                        <Text style={styles.selectedArtistName}>{artist.name}</Text>
+                        {artist.disambiguation && (
+                          <Text style={styles.hint}>{artist.disambiguation}</Text>
+                        )}
+                      </View>
+                      <Text style={styles.changeLink} onPress={() => setArtist(null)}>
+                        change
+                      </Text>
+                    </View>
+                  ) : (
+                    <>
+                      <View style={styles.inputWithIcon}>
+                        <Search size={16} color={colors.faint} style={styles.inputIcon} />
+                        <TextField
+                          value={artistQuery}
+                          onChangeText={setArtistQuery}
+                          placeholder="Start typing a name…"
+                          style={styles.inputPadded}
+                        />
+                      </View>
+                      {artistHits.map((hit) => (
+                        <Pressable
+                          key={hit.mbid}
+                          style={styles.suggestion}
+                          onPress={() => {
+                            setArtist(hit);
+                            setArtistHits([]);
+                          }}
+                        >
+                          <Text style={styles.suggestionText}>{hit.name}</Text>
+                          <Text style={styles.hint}>
+                            {[hit.disambiguation, hit.type, hit.country]
+                              .filter(Boolean)
+                              .join(" · ") || "artist"}
+                          </Text>
+                        </Pressable>
+                      ))}
+                      {(searching || noResults) && (
+                        <Text style={styles.hint}>
+                          {searching
+                            ? "Searching…"
+                            : `No artists found for "${artistQuery.trim()}"`}
+                        </Text>
+                      )}
+                    </>
+                  )}
+                </View>
+
+                <View style={styles.switchRow}>
+                  <Switch
+                    value={includeSingles}
+                    onValueChange={setIncludeSingles}
+                    trackColor={{ true: colors.accent, false: colors.hairlineStrong }}
+                    thumbColor="#FFFFFF"
+                  />
+                  <Text style={styles.switchLabel}>Include singles</Text>
+                </View>
+                <Text style={styles.hint}>
+                  Albums and EPs are always included. Singles can be frequent for busy artists.
+                </Text>
+
+                {musicFull && (
+                  <Text style={styles.warning}>
+                    You&apos;re watching {MUSIC_LIMIT} artists — delete one to add another.
+                  </Text>
+                )}
+              </>
+            )}
+
+            {preview && (
+              <View style={styles.preview}>
+                <Info size={16} color={colors.faint} />
+                <Text style={styles.previewText}>{preview}</Text>
+              </View>
+            )}
+          </ScrollView>
+
+          <View style={styles.sheetFooter}>
+            <Button variant="ghost" label="Cancel" onPress={() => setBuilderOpen(false)} />
+            <Button
+              label="Create watch"
+              onPress={onCreate}
+              disabled={!canCreate}
+              busy={busy}
+              style={styles.flex1}
+            />
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
-function Tab({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
-  return (
-    <Pressable style={[styles.tab, active && styles.tabActive]} onPress={onPress}>
-      <Text style={[styles.tabText, active && styles.tabTextActive]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function Chip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
-  return (
-    <Pressable style={[styles.chip, active && styles.chipActive]} onPress={onPress}>
-      <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#0F172A" },
-  content: { padding: 20, paddingTop: 64, paddingBottom: 48 },
-  header: { flexDirection: "row", alignItems: "center", gap: 13, marginBottom: 16 },
-  headerText: { flex: 1 },
-  title: { fontSize: 32, fontWeight: "800", color: "#fff" },
-  subtitle: { fontSize: 14, color: "#94A3B8", marginTop: 4 },
-  pushBanner: { backgroundColor: "#1D4ED8", borderRadius: 12, padding: 14, marginBottom: 16 },
-  pushBannerText: { color: "#fff", fontSize: 15, fontWeight: "600" },
-  noticeCard: {
-    backgroundColor: "#422006",
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 16,
-  },
-  noticeTitle: { color: "#FDE68A", fontSize: 15, fontWeight: "700" },
-  noticeBody: { color: "#FCD34D", fontSize: 13, marginTop: 4, lineHeight: 18 },
-  noticeButton: {
-    backgroundColor: "#B45309",
-    borderRadius: 10,
-    paddingVertical: 10,
-    alignItems: "center",
-    marginTop: 12,
-  },
-  noticeButtonText: { color: "#fff", fontWeight: "700", fontSize: 14 },
-  card: { backgroundColor: "#1E293B", borderRadius: 16, padding: 18 },
-  tabRow: { flexDirection: "row", gap: 8, marginBottom: 4 },
-  tab: { flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: "center" },
-  tabActive: { backgroundColor: "#334155" },
-  tabText: { color: "#64748B", fontWeight: "700", fontSize: 14 },
-  tabTextActive: { color: "#fff" },
-  labelRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" },
-  counter: { fontSize: 12, color: "#64748B", marginTop: 12, marginBottom: 6 },
-  fieldLabel: { fontSize: 13, color: "#94A3B8", marginTop: 12, marginBottom: 6 },
-  input: {
-    backgroundColor: "#0F172A",
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: "#fff",
-    fontSize: 16,
-  },
-  inputError: { borderWidth: 1, borderColor: "#F87171" },
-  locationRow: { flexDirection: "row", gap: 8, alignItems: "center" },
-  locationInput: { flex: 1 },
-  searchWrap: { position: "relative", justifyContent: "center" },
-  searchInput: { paddingRight: 44 },
-  searchSpinner: { position: "absolute", right: 14 },
-  iconButton: {
-    backgroundColor: "#334155",
-    borderRadius: 10,
-    padding: 12,
+  root: { flex: 1, backgroundColor: colors.canvas },
+  content: { padding: 20, paddingTop: 64, paddingBottom: 32, gap: 16 },
+
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  headerLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
+  title: { fontFamily: fonts.bold, fontSize: 26, letterSpacing: -0.8, color: colors.ink },
+  addButton: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.control,
+    backgroundColor: colors.accent,
     alignItems: "center",
     justifyContent: "center",
   },
-  iconButtonText: { fontSize: 18 },
-  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: "#0F172A",
-    borderWidth: 1,
-    borderColor: "#334155",
+
+  pushBanner: {
+    backgroundColor: colors.accentTint,
+    borderRadius: radius.control,
+    padding: 14,
   },
-  chipActive: { backgroundColor: "#2563EB", borderColor: "#2563EB" },
-  chipText: { color: "#94A3B8", fontWeight: "600" },
-  chipTextActive: { color: "#fff" },
-  hint: { color: "#64748B", fontSize: 12, marginTop: 8 },
-  confirmedHint: { color: "#4ADE80", fontSize: 12, marginTop: 8 },
-  warnHint: { color: "#FBBF24", fontSize: 12, marginTop: 10 },
-  errorHint: { color: "#F87171", fontSize: 12, marginTop: 6 },
+  pushBannerText: { fontFamily: fonts.medium, fontSize: 13.5, color: colors.accent },
+
+  noticeCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+    padding: 18,
+    ...cardShadow,
+  },
+  noticeTitle: { fontFamily: fonts.semibold, fontSize: 15, color: colors.ink },
+  noticeBody: { fontFamily: fonts.regular, fontSize: 13.5, color: colors.muted, marginTop: 4 },
+  noticeButton: { marginTop: 14 },
+
+  status: { fontFamily: fonts.regular, fontSize: 13, color: colors.muted },
+
+  chipRow: { gap: 8, paddingRight: 20 },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+  },
+  chipActive: { backgroundColor: colors.ink, borderColor: colors.ink },
+  chipText: { fontFamily: fonts.medium, fontSize: 14, color: colors.ink },
+  chipTextActive: { color: "#FFFFFF" },
+
+  cardList: { gap: 12 },
+  empty: { fontFamily: fonts.regular, fontSize: 14, color: colors.muted },
+
+  historyRow: {
+    flexDirection: "row",
+    gap: 12,
+    backgroundColor: colors.surface,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+    padding: 16,
+    ...cardShadow,
+  },
+  historyBody: { flex: 1 },
+  historyText: { fontFamily: fonts.regular, fontSize: 14, color: colors.ink },
+  historyMeta: { fontFamily: fonts.mono, fontSize: 11, color: colors.faint, marginTop: 4 },
+
+  panel: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+    padding: 18,
+    ...cardShadow,
+  },
+  panelTitle: { fontFamily: fonts.semibold, fontSize: 15, color: colors.ink },
+  panelBody: { fontFamily: fonts.regular, fontSize: 13.5, color: colors.muted, marginTop: 4 },
+  panelButton: { marginTop: 14 },
+  credits: { fontFamily: fonts.regular, fontSize: 12.5, color: colors.faint, marginTop: 12 },
+  link: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: colors.accent,
+    marginTop: 12,
+    textDecorationLine: "underline",
+  },
+
+  backdrop: { flex: 1, backgroundColor: "rgba(20,24,26,0.25)" },
+  sheet: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    maxHeight: "92%",
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    borderTopWidth: 1,
+    borderColor: colors.hairline,
+    paddingTop: 20,
+    paddingBottom: 28,
+  },
+  sheetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+  },
+  sheetTitle: { fontFamily: fonts.bold, fontSize: 20, letterSpacing: -0.4, color: colors.ink },
+  sheetBody: { paddingHorizontal: 20, paddingBottom: 16, gap: 18 },
+  sheetFooter: {
+    flexDirection: "row",
+    gap: 10,
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: colors.hairline,
+  },
+
+  sourceGrid: { flexDirection: "row", gap: 10 },
+  sourceTile: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderRadius: radius.control,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+  },
+  sourceTileSelected: {
+    borderWidth: 1.5,
+    borderColor: colors.accent,
+    backgroundColor: colors.accentTint,
+  },
+  sourceLabel: { fontFamily: fonts.regular, fontSize: 14, color: colors.ink },
+  sourceLabelSelected: { fontFamily: fonts.semibold, color: colors.accent },
+
+  field: { gap: 6 },
+  labelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  counter: { fontFamily: fonts.mono, fontSize: 11, color: colors.faint },
+  row: { flexDirection: "row", gap: 8, alignItems: "center" },
+  flex1: { flex: 1 },
+  inputWithIcon: { flex: 1, justifyContent: "center" },
+  inputIcon: { position: "absolute", left: 12, zIndex: 1 },
+  inputPadded: { paddingLeft: 36 },
+  locateButton: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.control,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  hint: { fontFamily: fonts.regular, fontSize: 12, color: colors.faint },
+  error: { fontFamily: fonts.regular, fontSize: 12, color: colors.danger },
+  warning: { fontFamily: fonts.regular, fontSize: 12.5, color: colors.warning },
+
+  suggestion: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: colors.sidebar,
+  },
+  suggestionText: { fontFamily: fonts.medium, fontSize: 13.5, color: colors.ink },
+
+  choice: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: radius.control,
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+  },
+  choiceSelected: {
+    borderWidth: 1.5,
+    borderColor: colors.accent,
+    backgroundColor: colors.accentTint,
+  },
+  choiceText: { fontFamily: fonts.regular, fontSize: 14, color: colors.ink },
+  choiceTextSelected: { fontFamily: fonts.semibold, color: colors.accent },
+
+  unitToggle: { width: 104 },
+
   selectedArtist: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-    marginTop: 12,
+    gap: 10,
     padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#2563EB",
-    backgroundColor: "#172554",
+    borderRadius: radius.control,
+    borderWidth: 1.5,
+    borderColor: colors.accent,
+    backgroundColor: colors.accentTint,
   },
-  hitRow: {
+  selectedArtistName: { fontFamily: fonts.semibold, fontSize: 14, color: colors.accent },
+  changeLink: { fontFamily: fonts.medium, fontSize: 12.5, color: colors.muted },
+
+  switchRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  switchLabel: { fontFamily: fonts.regular, fontSize: 14, color: colors.ink },
+
+  preview: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginTop: 8,
+    gap: 10,
     padding: 12,
-    borderRadius: 10,
-    backgroundColor: "#0F172A",
+    borderRadius: radius.control,
+    backgroundColor: colors.sidebar,
   },
-  hitName: { color: "#fff", fontSize: 14, fontWeight: "600" },
-  changeLink: { color: "#94A3B8", fontSize: 13 },
-  switchRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 16 },
-  switchLabel: { color: "#E2E8F0", fontSize: 15 },
-  button: {
-    backgroundColor: "#2563EB",
-    borderRadius: 12,
-    paddingVertical: 15,
-    alignItems: "center",
-    marginTop: 18,
-  },
-  buttonDisabled: { backgroundColor: "#334155" },
-  buttonText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  sectionTitle: { fontSize: 16, fontWeight: "700", color: "#fff", marginTop: 28, marginBottom: 10 },
-  listTabRow: { flexDirection: "row", gap: 8, marginTop: 28, marginBottom: 12 },
-  viewMore: {
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: "center",
-    backgroundColor: "#1E293B",
-  },
-  viewMoreText: { color: "#94A3B8", fontWeight: "600", fontSize: 14 },
-  footer: { marginTop: 32, gap: 8 },
-  footerText: { color: "#475569", fontSize: 11, lineHeight: 16 },
-  footerLink: { color: "#64748B", fontSize: 11, textDecorationLine: "underline" },
-  empty: { color: "#64748B" },
-  watchRow: {
-    backgroundColor: "#1E293B",
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  watchIcon: { fontSize: 22 },
-  watchBody: { flex: 1 },
-  watchLabel: { color: "#fff", fontSize: 15, fontWeight: "600" },
-  watchMeta: { color: "#94A3B8", fontSize: 13, marginTop: 4 },
-  deleteButton: { padding: 6 },
-  deleteIcon: { fontSize: 18 },
+  previewText: { flex: 1, fontFamily: fonts.regular, fontSize: 13, color: colors.muted },
 });

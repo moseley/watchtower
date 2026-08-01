@@ -1,41 +1,35 @@
-import Svg, { Circle, Defs, LinearGradient, Path, Rect, Stop } from "react-native-svg";
+import Svg, { Circle, G, Path, Rect } from "react-native-svg";
 
 /**
- * Watchtower mark — a lighthouse whose lantern room is a pair of binocular
- * lenses. Kept in step with the web version at apps/web/app/components/Logo.tsx;
- * the geometry is identical, only the element names differ.
+ * Watchtower mark — the broadcast tower from the Atlas mock, reversed out of
+ * an accent tile. Geometry is Lucide's RadioTower, kept in step with the web
+ * version at apps/web/app/components/Logo.tsx and with
+ * scripts/generate-icons.mjs.
  */
-export function Logo({ size = 56 }: { size?: number }) {
+export function Logo({ size = 34 }: { size?: number }) {
+  // The glyph is drawn in a 24-unit box, centred and scaled into the tile.
+  const scale = (size * 0.58) / 24;
+  const offset = size / 2 - 12 * scale;
+
   return (
-    <Svg width={size} height={size} viewBox="0 0 64 64">
-      <Defs>
-        <LinearGradient id="wtBeamL" x1="14" y1="0" x2="0" y2="0" gradientUnits="userSpaceOnUse">
-          <Stop stopColor="#60A5FA" stopOpacity="0.55" />
-          <Stop offset="1" stopColor="#60A5FA" stopOpacity="0" />
-        </LinearGradient>
-        <LinearGradient id="wtBeamR" x1="50" y1="0" x2="64" y2="0" gradientUnits="userSpaceOnUse">
-          <Stop stopColor="#60A5FA" stopOpacity="0.55" />
-          <Stop offset="1" stopColor="#60A5FA" stopOpacity="0" />
-        </LinearGradient>
-      </Defs>
-
-      <Path d="M14 17 L0 8 V26 Z" fill="url(#wtBeamL)" />
-      <Path d="M50 17 L64 8 V26 Z" fill="url(#wtBeamR)" />
-
-      <Path d="M24 31 H40 L47 57 H17 Z" fill="#E2E8F0" />
-      <Path d="M22.65 36 H41.35 L42.69 41 H21.31 Z" fill="#2563EB" />
-      <Path d="M19.69 47 H44.31 L45.65 52 H18.35 Z" fill="#2563EB" />
-      <Rect x="12" y="56" width="40" height="6" rx="2.5" fill="#CBD5E1" />
-
-      <Rect x="18" y="26" width="28" height="5.5" rx="2.5" fill="#CBD5E1" />
-
-      <Rect x="27" y="12" width="10" height="9" rx="2" fill="#CBD5E1" />
-      <Circle cx="23" cy="17" r="8.5" fill="#E2E8F0" />
-      <Circle cx="41" cy="17" r="8.5" fill="#E2E8F0" />
-      <Circle cx="23" cy="17" r="5" fill="#2563EB" />
-      <Circle cx="41" cy="17" r="5" fill="#2563EB" />
-      <Circle cx="23" cy="17" r="2" fill="#BFDBFE" />
-      <Circle cx="41" cy="17" r="2" fill="#BFDBFE" />
+    <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      <Rect width={size} height={size} rx={size * 0.26} fill="#0F6B4F" />
+      <G
+        transform={`translate(${offset} ${offset}) scale(${scale})`}
+        fill="none"
+        stroke="#FFFFFF"
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <Path d="M4.9 16.1C1 12.2 1 5.8 4.9 1.9" />
+        <Path d="M7.8 4.7a6.14 6.14 0 0 0-.8 7.5" />
+        <Circle cx="12" cy="9" r="2" />
+        <Path d="M16.2 4.8c2 2 2.26 5.11.8 7.47" />
+        <Path d="M19.1 1.9a9.96 9.96 0 0 1 0 14.1" />
+        <Path d="M9.5 18h5" />
+        <Path d="m8 22 4-11 4 11" />
+      </G>
     </Svg>
   );
 }
