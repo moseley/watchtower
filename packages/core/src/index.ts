@@ -9,6 +9,7 @@
 export * from "./adapters/types";
 export * from "./adapters/weather";
 export * from "./adapters/music";
+export * from "./adapters/screen";
 export * from "./push/expo";
 export * from "./push/webpush";
 export * from "./push/dispatcher";
@@ -16,10 +17,12 @@ export * from "./engine";
 
 import { weatherAdapter } from "./adapters/weather";
 import { musicAdapter } from "./adapters/music";
+import { screenAdapter } from "./adapters/screen";
 import type { SourceAdapter } from "./adapters/types";
 
 /** Default adapter registry. Add new domains here as they ship. */
 export const defaultAdapters: Record<string, SourceAdapter<any>> = {
   weather: weatherAdapter,
   music: musicAdapter,
+  screen: screenAdapter,
 };

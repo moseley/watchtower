@@ -31,6 +31,7 @@ import { TabBar, type ListView } from "./components/TabBar";
 import { WatchCard } from "./components/WatchCard";
 import {
   AudioLines,
+  Clapperboard,
   CloudSun,
   Crosshair,
   Info,
@@ -54,7 +55,9 @@ import {
   registerDevice,
   reverseGeocode,
   searchArtists,
+  searchPeople,
   type ArtistHit,
+  type PersonHit,
   type GeocodeResult,
   type LatestRelease,
   type NotificationRow,
@@ -64,10 +67,10 @@ import { API_URL } from "./lib/config";
 import { getExpoPushToken } from "./lib/push";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-type Source = "weather" | "music";
+type Source = "weather" | "music" | "screen";
 type Metric = "temperature" | "precipitation_probability" | "wind_speed";
 type Comparator = "below" | "above";
-type SourceFilter = "all" | "weather" | "music";
+type SourceFilter = "all" | "weather" | "music" | "screen";
 
 const MUSIC_LIMIT = 5;
 
@@ -164,7 +167,16 @@ export default function App() {
   const [lastRelease, setLastRelease] = useState<LatestRelease | null>(null);
   const [loadingRelease, setLoadingRelease] = useState(false);
 
+  // film & tv form
+  const [personQuery, setPersonQuery] = useState("");
+  const [personHits, setPersonHits] = useState<PersonHit[]>([]);
+  const [searchingPerson, setSearchingPerson] = useState(false);
+  const [noPersonResults, setNoPersonResults] = useState(false);
+  const [person, setPerson] = useState<PersonHit | null>(null);
+  const [includeMinorCredits, setIncludeMinorCredits] = useState(false);
+
   const musicCount = watches.filter((w) => w.source === "music").length;
+  const screenCount = watches.filter((w) => w.source === "screen").length;
 
   useEffect(() => {
     let received: ReturnType<typeof Notifications.addNotificationReceivedListener> | undefined;
@@ -353,6 +365,38 @@ export default function App() {
     };
   }, [artistQuery, source, artist]);
 
+  // Person search, same debounce-and-abort shape as the artist search.
+  useEffect(() => {
+    const q = personQuery.trim();
+    if (source !== "screen" || person || q.length < 2) {
+      setPersonHits([]);
+      setNoPersonResults(false);
+      setSearchingPerson(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setSearchingPerson(true);
+      try {
+        const hits = await searchPeople(q, controller.signal);
+        setPersonHits(hits);
+        setNoPersonResults(hits.length === 0);
+      } catch (err) {
+        if ((err as Error).name === "AbortError") return; // superseded
+        setPersonHits([]);
+        setStatus(`Search failed: ${(err as Error).message}`);
+      } finally {
+        if (!controller.signal.aborted) setSearchingPerson(false);
+      }
+    }, 350);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [personQuery, source, person]);
+
   // Resolve what the user types into concrete places, so an ambiguous name
   // ("San Jose") can be disambiguated before the watch is created rather than
   // after. Same debounce-and-abort shape as the artist search above.
@@ -501,11 +545,32 @@ export default function App() {
     setArtistQuery("");
   }
 
+  async function createScreenWatch(id: string) {
+    if (!person) throw new Error("Pick someone first");
+    await createWatch({
+      ownerId: id,
+      source: "screen",
+      label: person.name,
+      config: {
+        person: {
+          tmdbId: person.tmdbId,
+          name: person.name,
+          ...(person.knownFor ? { knownFor: person.knownFor } : {}),
+        },
+        includeMinorCredits,
+      },
+    });
+    setPerson(null);
+    setPersonHits([]);
+    setPersonQuery("");
+  }
+
   async function onCreate() {
     if (!ownerId) return;
     setBusy(true);
     try {
       if (source === "weather") await createWeatherWatch(ownerId);
+      else if (source === "screen") await createScreenWatch(ownerId);
       else await createMusicWatch(ownerId);
       setStatus("Watch created");
       await refreshWatches(ownerId);
@@ -529,6 +594,7 @@ export default function App() {
 
   const thresholdProblem = thresholdError();
   const musicFull = musicCount >= MUSIC_LIMIT;
+  const screenFull = screenCount >= MUSIC_LIMIT;
   // Deliberately not gated on `locating`: a typed city needs no GPS, so a slow
   // or failed fix must never block creating a watch.
   const canCreate =
@@ -536,12 +602,15 @@ export default function App() {
     !busy &&
     (source === "weather"
       ? !thresholdProblem && locationText.trim() !== ""
-      : Boolean(artist) && !musicFull);
+      : source === "screen"
+        ? Boolean(person) && !screenFull
+        : Boolean(artist) && !musicFull);
 
   const counts = {
     all: watches.length,
     weather: watches.filter((w) => w.source === "weather").length,
     music: musicCount,
+    screen: screenCount,
   };
   const visibleWatches =
     sourceFilter === "all" ? watches : watches.filter((w) => w.source === sourceFilter);
@@ -556,6 +625,12 @@ export default function App() {
       return `You'll be alerted when ${artist.name} releases ${
         includeSingles ? "an album, EP or single" : "an album or EP"
       }.`;
+    }
+    if (source === "screen") {
+      if (!person) return null;
+      return includeMinorCredits
+        ? `You'll be alerted whenever ${person.name} is credited on anything new.`
+        : `You'll be alerted when ${person.name} is attached to a new film or series.`;
     }
     const place = locationText.trim();
     if (!place || thresholdProblem) return null;
@@ -639,6 +714,7 @@ export default function App() {
                   { value: "all", label: `All ${counts.all}`, icon: Layers },
                   { value: "weather", label: "Weather", icon: CloudSun },
                   { value: "music", label: "Music", icon: AudioLines },
+                  { value: "screen", label: "Film & TV", icon: Clapperboard },
                 ] as { value: SourceFilter; label: string; icon: typeof Layers }[]
               ).map(({ value, label, icon: Icon }) => {
                 const active = sourceFilter === value;
@@ -731,7 +807,11 @@ export default function App() {
               </Text>
               <Text style={styles.credits}>
                 Weather by Open-Meteo · Music data by MusicBrainz · Reverse geocoding by
-                BigDataCloud
+                BigDataCloud · Film & TV data by TMDB
+              </Text>
+              {/* TMDB's terms require stating this explicitly. */}
+              <Text style={styles.credits}>
+                This product uses the TMDB API but is not endorsed or certified by TMDB.
               </Text>
               <Text style={styles.link} onPress={() => Linking.openURL(`${API_URL}/privacy`)}>
                 Privacy
@@ -773,6 +853,7 @@ export default function App() {
                 [
                   { value: "weather", label: "Weather", icon: CloudSun },
                   { value: "music", label: "Music", icon: AudioLines },
+                  { value: "screen", label: "Film & TV", icon: Clapperboard },
                 ] as { value: Source; label: string; icon: typeof CloudSun }[]
               ).map(({ value, label, icon: Icon }) => {
                 const selected = source === value;
@@ -917,6 +998,89 @@ export default function App() {
                   </View>
                   {thresholdProblem && <Text style={styles.error}>{thresholdProblem}</Text>}
                 </View>
+              </>
+            ) : source === "screen" ? (
+              <>
+                <View style={styles.field}>
+                  <View style={styles.labelRow}>
+                    <FieldLabel>Actor or director</FieldLabel>
+                    <Text style={styles.counter}>
+                      {screenCount} / {MUSIC_LIMIT}
+                    </Text>
+                  </View>
+
+                  {person ? (
+                    <View style={styles.selectedArtist}>
+                      <Clapperboard size={17} color={colors.accent} />
+                      <View style={styles.flex1}>
+                        <Text style={styles.selectedArtistName}>{person.name}</Text>
+                        {person.knownForTitles.length > 0 && (
+                          <Text style={styles.hint} numberOfLines={1}>
+                            {person.knownForTitles.join(" · ")}
+                          </Text>
+                        )}
+                      </View>
+                      <Text style={styles.changeLink} onPress={() => setPerson(null)}>
+                        change
+                      </Text>
+                    </View>
+                  ) : (
+                    <>
+                      <View style={styles.inputWithIcon}>
+                        <Search size={16} color={colors.faint} style={styles.inputIcon} />
+                        <TextField
+                          value={personQuery}
+                          onChangeText={setPersonQuery}
+                          placeholder="Start typing a name…"
+                          style={styles.inputPadded}
+                        />
+                      </View>
+                      {personHits.map((hit) => (
+                        <Pressable
+                          key={hit.tmdbId}
+                          style={styles.suggestion}
+                          onPress={() => {
+                            setPerson(hit);
+                            setPersonHits([]);
+                          }}
+                        >
+                          <Text style={styles.suggestionText}>{hit.name}</Text>
+                          <Text style={styles.hint} numberOfLines={1}>
+                            {[hit.knownFor, ...hit.knownForTitles].filter(Boolean).join(" · ") ||
+                              "person"}
+                          </Text>
+                        </Pressable>
+                      ))}
+                      {(searchingPerson || noPersonResults) && (
+                        <Text style={styles.hint}>
+                          {searchingPerson
+                            ? "Searching…"
+                            : `No people found for "${personQuery.trim()}"`}
+                        </Text>
+                      )}
+                    </>
+                  )}
+                </View>
+
+                <View style={styles.switchRow}>
+                  <Switch
+                    value={includeMinorCredits}
+                    onValueChange={setIncludeMinorCredits}
+                    trackColor={{ true: colors.accent, false: colors.hairlineStrong }}
+                    thumbColor="#FFFFFF"
+                  />
+                  <Text style={styles.switchLabel}>Include documentaries & minor credits</Text>
+                </View>
+                <Text style={styles.hint}>
+                  Off by default: talk shows, behind-the-scenes featurettes and courtesy credits
+                  are where most of the noise comes from.
+                </Text>
+
+                {screenFull && (
+                  <Text style={styles.warning}>
+                    You&apos;re watching {MUSIC_LIMIT} people — delete one to add another.
+                  </Text>
+                )}
               </>
             ) : (
               <>

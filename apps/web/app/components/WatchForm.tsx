@@ -1,10 +1,10 @@
 "use client";
 
-import { AudioLines, CloudSun, Crosshair, Info, Search } from "./icons";
+import { AudioLines, Clapperboard, CloudSun, Crosshair, Info, Search } from "./icons";
 import { Button, FieldLabel, SegmentedControl, TextField } from "./primitives";
-import type { ArtistHit, Place } from "./types";
+import type { ArtistHit, PersonHit, Place } from "./types";
 
-type Source = "weather" | "music";
+type Source = "weather" | "music" | "screen";
 type Metric = "temperature" | "precipitation_probability" | "wind_speed";
 type Comparator = "below" | "above";
 type TempUnit = "F" | "C";
@@ -12,6 +12,7 @@ type TempUnit = "F" | "C";
 const SOURCES: { value: Source; label: string; icon: typeof CloudSun }[] = [
   { value: "weather", label: "Weather", icon: CloudSun },
   { value: "music", label: "Music", icon: AudioLines },
+  { value: "screen", label: "Film & TV", icon: Clapperboard },
 ];
 
 const METRIC_OPTIONS: { value: Metric; label: string }[] = [
@@ -61,6 +62,19 @@ export interface WatchFormProps {
   lastRelease: { date: string; title: string; type: string } | null;
   loadingRelease: boolean;
 
+  // film & tv
+  personQuery: string;
+  onPersonQueryChange: (next: string) => void;
+  personHits: PersonHit[];
+  searchingPerson: boolean;
+  noPersonResults: boolean;
+  person: PersonHit | null;
+  onPickPerson: (hit: PersonHit | null) => void;
+  includeMinorCredits: boolean;
+  onIncludeMinorCreditsChange: (next: boolean) => void;
+  screenCount: number;
+  screenFull: boolean;
+
   canCreate: boolean;
   busy: boolean;
   onCreate: () => void;
@@ -80,6 +94,12 @@ function rulePreview(p: WatchFormProps): string | null {
     return `You'll be alerted when ${p.artist.name} releases ${
       p.includeSingles ? "an album, EP or single" : "an album or EP"
     }.`;
+  }
+  if (p.source === "screen") {
+    if (!p.person) return null;
+    return p.includeMinorCredits
+      ? `You'll be alerted whenever ${p.person.name} is credited on anything new.`
+      : `You'll be alerted when ${p.person.name} is attached to a new film or series.`;
   }
   const place = p.locationText.trim();
   if (!place || p.thresholdProblem) return null;
@@ -129,6 +149,17 @@ export function WatchForm(props: WatchFormProps) {
     musicFull,
     lastRelease,
     loadingRelease,
+    personQuery,
+    onPersonQueryChange,
+    personHits,
+    searchingPerson,
+    noPersonResults,
+    person,
+    onPickPerson,
+    includeMinorCredits,
+    onIncludeMinorCreditsChange,
+    screenCount,
+    screenFull,
     canCreate,
     busy,
     onCreate,
@@ -290,6 +321,99 @@ export function WatchForm(props: WatchFormProps) {
                 <p className="text-[12px] text-red-600">{thresholdProblem}</p>
               )}
             </div>
+          </>
+        ) : source === "screen" ? (
+          <>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-baseline justify-between">
+                <FieldLabel htmlFor="person">Actor or director</FieldLabel>
+                <span className="font-mono text-[11px] text-faint tabular-nums">
+                  {screenCount} / {musicLimit}
+                </span>
+              </div>
+
+              {person ? (
+                <div className="flex items-center gap-2.5 rounded-control border-[1.5px] border-accent bg-accent-tint px-3 py-2.5">
+                  <Clapperboard size={17} className="shrink-0 text-accent" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[14px] font-semibold text-accent">{person.name}</p>
+                    {person.knownForTitles.length > 0 && (
+                      <p className="truncate text-[12px] text-muted">
+                        {person.knownForTitles.join(" · ")}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onPickPerson(null)}
+                    className="shrink-0 text-[12.5px] font-medium text-muted underline hover:text-ink"
+                  >
+                    change
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <TextField
+                    id="person"
+                    icon={Search}
+                    value={personQuery}
+                    onChange={(e) => onPersonQueryChange(e.target.value)}
+                    placeholder="Start typing a name…"
+                    autoComplete="off"
+                    disabled={disabled}
+                  />
+                  {personHits.length > 0 && (
+                    <ul className="flex flex-col gap-1 pt-0.5">
+                      {personHits.map((hit) => (
+                        <li key={hit.tmdbId}>
+                          <button
+                            type="button"
+                            onClick={() => onPickPerson(hit)}
+                            className="w-full rounded-[8px] px-3 py-2 text-left transition-colors hover:bg-sidebar"
+                          >
+                            <span className="block text-[13.5px] font-medium text-ink">
+                              {hit.name}
+                            </span>
+                            <span className="block truncate text-[12px] text-faint">
+                              {[hit.knownFor, ...hit.knownForTitles].filter(Boolean).join(" · ") ||
+                                "person"}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="text-[12px] text-faint" role="status" aria-live="polite">
+                    {searchingPerson
+                      ? "Searching…"
+                      : noPersonResults
+                        ? `No people found for "${personQuery.trim()}"`
+                        : ""}
+                  </p>
+                </>
+              )}
+            </div>
+
+            <label className="flex items-center gap-2.5 text-[14px] text-ink">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-[#0F6B4F]"
+                checked={includeMinorCredits}
+                onChange={(e) => onIncludeMinorCreditsChange(e.target.checked)}
+                disabled={disabled}
+              />
+              Include documentaries &amp; minor credits
+            </label>
+            <p className="-mt-3 text-[12px] text-faint">
+              Off by default: talk shows, behind-the-scenes featurettes and courtesy credits are
+              where most of the noise comes from.
+            </p>
+
+            {screenFull && (
+              <p className="text-[12.5px] text-amber-700">
+                You&apos;re watching {musicLimit} people — delete one to add another.
+              </p>
+            )}
           </>
         ) : (
           <>

@@ -16,6 +16,9 @@ export function describeRule(w: WatchRow): string {
   if (w.source === "music") {
     return w.config.includeSingles ? "new albums, EPs & singles" : "new albums & EPs";
   }
+  if (w.source === "screen") {
+    return w.config.includeMinorCredits ? "any new credit" : "new films & series";
+  }
   const rule = w.config.rule;
   if (!rule) return "";
   const suffix =
@@ -28,9 +31,9 @@ export function describeRule(w: WatchRow): string {
 }
 
 export function watchTitle(w: WatchRow): string {
-  return w.source === "music"
-    ? (w.config.artist?.name ?? w.label)
-    : (w.config.location?.label ?? w.label);
+  if (w.source === "music") return w.config.artist?.name ?? w.label;
+  if (w.source === "screen") return w.config.person?.name ?? w.label;
+  return w.config.location?.label ?? w.label;
 }
 
 function metricBounds(metric: string | undefined, unit: string | undefined) {
@@ -58,7 +61,9 @@ export function describeWatch(w: WatchRow, current?: number): WatchDisplay {
   const matchedAt = w.lastMatchedAt ? new Date(w.lastMatchedAt).getTime() : null;
   const firing = matchedAt !== null && Date.now() - matchedAt < DAY_MS;
 
-  if (w.source === "music") {
+  // Music and screen watches both count from the last thing the person put
+  // out, and neither has a numeric threshold to plot.
+  if (w.source === "music" || w.source === "screen") {
     // Prefer a release we actually alerted on, then the catalogue position
     // recorded when the watch was made, and only fall back to the watch's own
     // start date for watches created before that lookup existed.
@@ -70,8 +75,8 @@ export function describeWatch(w: WatchRow, current?: number): WatchDisplay {
     if (since === null) return { firing, value: null, delta: "no activity yet", fill: 0 };
 
     const days = Math.max(0, Math.floor((Date.now() - since) / DAY_MS));
-    const delta =
-      matchedAt || recorded !== null ? "since last release" : "since you started watching";
+    const noun = w.source === "screen" ? "since last credit" : "since last release";
+    const delta = matchedAt || recorded !== null ? noun : "since you started watching";
     return { firing, value: `${days}d`, delta, fill: 0 };
   }
 

@@ -6,20 +6,21 @@ import { Sidebar } from "./components/Sidebar";
 import { SlideOver } from "./components/SlideOver";
 import { WatchCard } from "./components/WatchCard";
 import { WatchForm } from "./components/WatchForm";
-import { AudioLines, Bell, CloudSun, Layers, Plus, watchIcon } from "./components/icons";
+import { AudioLines, Bell, Clapperboard, CloudSun, Layers, Plus, watchIcon } from "./components/icons";
 import { Button } from "./components/primitives";
 import type { LatestRelease } from "@watchtower/types";
 import type {
   ArtistHit,
   ListView,
   NotificationRow,
+  PersonHit,
   Place,
   SourceFilter,
   WatchRow,
 } from "./components/types";
 import { describeWatch, timeAgo } from "./components/watch-display";
 
-type Source = "weather" | "music";
+type Source = "weather" | "music" | "screen";
 type Metric = "temperature" | "precipitation_probability" | "wind_speed";
 type Comparator = "below" | "above";
 type TempUnit = "F" | "C";
@@ -114,7 +115,16 @@ export default function Home() {
   const [lastRelease, setLastRelease] = useState<LatestRelease | null>(null);
   const [loadingRelease, setLoadingRelease] = useState(false);
 
+  // film & tv form
+  const [personQuery, setPersonQuery] = useState("");
+  const [personHits, setPersonHits] = useState<PersonHit[]>([]);
+  const [searchingPerson, setSearchingPerson] = useState(false);
+  const [noPersonResults, setNoPersonResults] = useState(false);
+  const [person, setPerson] = useState<PersonHit | null>(null);
+  const [includeMinorCredits, setIncludeMinorCredits] = useState(false);
+
   const musicCount = watches.filter((w) => w.source === "music").length;
+  const screenCount = watches.filter((w) => w.source === "screen").length;
 
   const refreshWatches = useCallback(async (id: string) => {
     try {
@@ -275,6 +285,41 @@ export default function Home() {
     };
   }, [artistQuery, source, artist]);
 
+  // Person search, same debounce-and-abort shape as the artist search.
+  useEffect(() => {
+    const q = personQuery.trim();
+    if (source !== "screen" || person || q.length < 2) {
+      setPersonHits([]);
+      setNoPersonResults(false);
+      setSearchingPerson(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setSearchingPerson(true);
+      try {
+        const json = await api<{ people: PersonHit[] }>(
+          `/api/screen/search?q=${encodeURIComponent(q)}`,
+          { signal: controller.signal },
+        );
+        setPersonHits(json.people);
+        setNoPersonResults(json.people.length === 0);
+      } catch (err) {
+        if ((err as Error).name === "AbortError") return; // superseded
+        setPersonHits([]);
+        setStatus(`Search failed: ${(err as Error).message}`);
+      } finally {
+        if (!controller.signal.aborted) setSearchingPerson(false);
+      }
+    }, 350);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [personQuery, source, person]);
+
   // Resolve what the user types into concrete places, so an ambiguous name
   // ("San Jose") can be disambiguated before the watch is created rather than
   // after. Same debounce-and-abort shape as the artist search above.
@@ -431,11 +476,36 @@ export default function Home() {
     setArtistQuery("");
   }
 
+  async function createScreenWatch() {
+    if (!person) throw new Error("Pick someone first");
+    await api("/api/watches", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ownerId,
+        source: "screen",
+        label: person.name,
+        config: {
+          person: {
+            tmdbId: person.tmdbId,
+            name: person.name,
+            ...(person.knownFor ? { knownFor: person.knownFor } : {}),
+          },
+          includeMinorCredits,
+        },
+      }),
+    });
+    setPerson(null);
+    setPersonHits([]);
+    setPersonQuery("");
+  }
+
   async function onCreate() {
     if (!ownerId) return;
     setBusy(true);
     try {
       if (source === "weather") await createWeatherWatch();
+      else if (source === "screen") await createScreenWatch();
       else await createMusicWatch();
       setStatus("Watch created");
       await refreshWatches(ownerId);
@@ -461,6 +531,7 @@ export default function Home() {
 
   const thresholdProblem = thresholdError();
   const musicFull = musicCount >= MUSIC_LIMIT;
+  const screenFull = screenCount >= MUSIC_LIMIT;
   // Deliberately not gated on `locating`: a typed city needs no GPS, so a slow
   // or failed fix must never block creating a watch.
   const canCreate =
@@ -468,12 +539,15 @@ export default function Home() {
     !busy &&
     (source === "weather"
       ? !thresholdProblem && locationText.trim() !== ""
-      : Boolean(artist) && !musicFull);
+      : source === "screen"
+        ? Boolean(person) && !screenFull
+        : Boolean(artist) && !musicFull);
 
   const counts = {
     all: watches.length,
     weather: watches.filter((w) => w.source === "weather").length,
     music: musicCount,
+    screen: screenCount,
   };
   const visibleWatches =
     sourceFilter === "all" ? watches : watches.filter((w) => w.source === sourceFilter);
@@ -489,7 +563,9 @@ export default function Home() {
       ? "All watches"
       : sourceFilter === "weather"
         ? "Weather watches"
-        : "Music watches";
+        : sourceFilter === "screen"
+          ? "Film & TV watches"
+          : "Music watches";
 
   function openBuilder() {
     setStatus("");
@@ -568,6 +644,7 @@ export default function Home() {
                   { value: "all" as SourceFilter, label: `All ${counts.all}`, icon: Layers },
                   { value: "weather" as SourceFilter, label: "Weather", icon: CloudSun },
                   { value: "music" as SourceFilter, label: "Music", icon: AudioLines },
+                  { value: "screen" as SourceFilter, label: "Film & TV", icon: Clapperboard },
                 ] satisfies { value: SourceFilter; label: string; icon: typeof Layers }[]
               ).map(({ value, label, icon: Icon }) => {
                 const active = sourceFilter === value;
@@ -697,7 +774,11 @@ export default function Home() {
               </p>
               <p className="mt-3 text-[12.5px] text-faint">
                 Weather by Open-Meteo · Music data by MusicBrainz · Reverse geocoding by
-                BigDataCloud
+                BigDataCloud · Film &amp; TV data by TMDB
+              </p>
+              {/* TMDB's terms require stating this explicitly. */}
+              <p className="mt-1 text-[12.5px] text-faint">
+                This product uses the TMDB API but is not endorsed or certified by TMDB.
               </p>
               <a
                 href="/privacy"
@@ -759,6 +840,20 @@ export default function Home() {
           musicFull={musicFull}
           lastRelease={lastRelease}
           loadingRelease={loadingRelease}
+          personQuery={personQuery}
+          onPersonQueryChange={setPersonQuery}
+          personHits={personHits}
+          searchingPerson={searchingPerson}
+          noPersonResults={noPersonResults}
+          person={person}
+          onPickPerson={(hit) => {
+            setPerson(hit);
+            setPersonHits([]);
+          }}
+          includeMinorCredits={includeMinorCredits}
+          onIncludeMinorCreditsChange={setIncludeMinorCredits}
+          screenCount={screenCount}
+          screenFull={screenFull}
           canCreate={canCreate}
           busy={busy}
           onCreate={onCreate}

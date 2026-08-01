@@ -93,6 +93,10 @@ export default function PrivacyPage() {
               search for and the artists you watch.
             </li>
             <li>
+              <strong className="text-white">TMDB</strong> — receives names you search for and the
+              people you watch, to check their film and television credits.
+            </li>
+            <li>
               <strong className="text-white">Expo, Apple (APNs), and Google (FCM)</strong> —
               deliver push notifications to your device.
             </li>
@@ -165,6 +169,13 @@ export default function PrivacyPage() {
               <a className="text-blue-400 hover:underline" href="https://www.apple.com/itunes/">
                 iTunes Search API
               </a>
+            </li>
+            <li>
+              Film and television data by{" "}
+              <a className="text-blue-400 hover:underline" href="https://www.themoviedb.org/">
+                TMDB
+              </a>{" "}
+              — this product uses the TMDB API but is not endorsed or certified by TMDB
             </li>
           </ul>
         </Section>

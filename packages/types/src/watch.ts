@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { MusicWatchConfigSchema } from "./music";
+import { ScreenWatchConfigSchema } from "./screen";
 import { WeatherWatchConfigSchema } from "./weather";
 
 /** Every adapter registers a source key. Grows as domains are added. */
-export const WatchSourceSchema = z.enum(["weather", "music"]);
+export const WatchSourceSchema = z.enum(["weather", "music", "screen"]);
 export type WatchSource = z.infer<typeof WatchSourceSchema>;
 
 /**
@@ -21,12 +22,24 @@ export const CreateWatchInputSchema = z.discriminatedUnion("source", [
     label: z.string().min(1).max(80),
     config: MusicWatchConfigSchema,
   }),
+  z.object({
+    source: z.literal("screen"),
+    label: z.string().min(1).max(80),
+    config: ScreenWatchConfigSchema,
+  }),
 ]);
-export type CreateWatchInput = z.infer<typeof CreateWatchInputSchema>;
+/**
+ * Deliberately `z.input`, not `z.infer`: fields carrying a Zod default — and
+ * snapshots the server fills in, like knownCredits — are optional for whoever
+ * is building the request. `z.infer` describes the parsed result instead, and
+ * would demand values a client has no way to supply.
+ */
+export type CreateWatchInput = z.input<typeof CreateWatchInputSchema>;
 
 /** How many watches one owner may keep per source (absent = unlimited). */
 export const WATCH_LIMITS: Partial<Record<WatchSource, number>> = {
   music: 5,
+  screen: 5,
 };
 
 /** A browser's Web Push subscription (PushSubscription.toJSON()). */

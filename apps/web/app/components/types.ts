@@ -7,6 +7,8 @@ export interface WatchRow {
     rule?: { metric?: string; comparator?: string; threshold?: number; unit?: string };
     artist?: { name?: string; mbid?: string };
     includeSingles?: boolean;
+    person?: { name?: string; tmdbId?: number; knownFor?: string };
+    includeMinorCredits?: boolean;
     lastRelease?: { date: string; title: string; type: string };
   };
   // Already returned by /api/watches — the list route selects no subset, so
@@ -30,7 +32,14 @@ export interface NotificationRow {
 export type ListView = "watches" | "history" | "settings";
 
 /** Source filter applied to the watch grid. */
-export type SourceFilter = "all" | "weather" | "music";
+export type SourceFilter = "all" | "weather" | "music" | "screen";
+
+export interface PersonHit {
+  tmdbId: number;
+  name: string;
+  knownFor?: string;
+  knownForTitles: string[];
+}
 
 export interface Place {
   latitude: number;

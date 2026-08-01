@@ -1,10 +1,12 @@
 import {
   AudioLines,
   Bell,
+  Clapperboard,
   CloudRain,
   CloudSun,
   Crosshair,
   Eye,
+  Film,
   Info,
   Layers,
   Plus,
@@ -20,10 +22,12 @@ import {
 export {
   AudioLines,
   Bell,
+  Clapperboard,
   CloudRain,
   CloudSun,
   Crosshair,
   Eye,
+  Film,
   Info,
   Layers,
   Plus,
@@ -42,6 +46,7 @@ export type { LucideIcon };
  */
 export function watchIcon(source: string, metric: string | undefined): LucideIcon {
   if (source === "music") return AudioLines;
+  if (source === "screen") return Film;
   if (metric === "precipitation_probability") return CloudRain;
   if (metric === "wind_speed") return Wind;
   if (metric === "temperature") return ThermometerSun;

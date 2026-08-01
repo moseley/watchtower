@@ -1,5 +1,6 @@
 import { type Prisma, prisma } from "@watchtower/db";
 import { CreateWatchInputSchema, WATCH_LIMITS } from "@watchtower/types";
+import { getPersonSnapshot } from "@watchtower/core";
 import { lookupLatestRelease } from "../../../lib/latest-release";
 
 export const dynamic = "force-dynamic";
@@ -63,12 +64,29 @@ export async function POST(request: Request) {
     }
   }
 
+  if (source === "screen") {
+    const duplicate = await prisma.watch.findFirst({
+      where: {
+        ownerId,
+        source: "screen",
+        config: { path: ["person", "tmdbId"], equals: config.person.tmdbId },
+      },
+    });
+    if (duplicate) {
+      return Response.json(
+        { error: `You're already watching ${config.person.name}.` },
+        { status: 409 },
+      );
+    }
+  }
+
   const limit = WATCH_LIMITS[source];
   if (limit !== undefined) {
     const existing = await prisma.watch.count({ where: { ownerId, source } });
+    const noun = source === "screen" ? "people" : source;
     if (existing >= limit) {
       return Response.json(
-        { error: `You can watch up to ${limit} ${source} items. Delete one to add another.` },
+        { error: `You can watch up to ${limit} ${noun}. Delete one to add another.` },
         { status: 409 },
       );
     }
@@ -85,6 +103,26 @@ export async function POST(request: Request) {
       if (release) storedConfig = { ...config, lastRelease: release };
     } catch {
       // leave it off; the card falls back to the watch's own start date
+    }
+  }
+
+  // Record the person's existing filmography, so their back catalogue is never
+  // announced as new. Unlike music there is no date to compare against — an
+  // announced project often has no release date at all — so this snapshot is
+  // the only thing separating "new" from "already there".
+  if (source === "screen") {
+    try {
+      const snapshot = await getPersonSnapshot(config.person.tmdbId, {
+        includeMinorCredits: config.includeMinorCredits,
+      });
+      storedConfig = { ...config, ...snapshot };
+    } catch (err) {
+      // Without a baseline the first poll would announce their whole career,
+      // so this one genuinely has to block.
+      return Response.json(
+        { error: `Couldn't read that person's filmography: ${(err as Error).message}` },
+        { status: 502 },
+      );
     }
   }
 

@@ -62,6 +62,8 @@ export interface WatchRow {
     rule?: { metric?: string; comparator?: string; threshold?: number; unit?: string };
     artist?: { name?: string; mbid?: string };
     includeSingles?: boolean;
+    person?: { name?: string; tmdbId?: number; knownFor?: string };
+    includeMinorCredits?: boolean;
     lastRelease?: { date: string; title: string; type: string };
   };
   // Already returned by /api/watches — the list route selects no subset, so
@@ -114,6 +116,25 @@ export async function listNotifications(ownerId: string): Promise<NotificationRo
     `/api/notifications?ownerId=${encodeURIComponent(ownerId)}`,
   );
   return json.notifications;
+}
+
+export interface PersonHit {
+  tmdbId: number;
+  name: string;
+  knownFor?: string;
+  knownForTitles: string[];
+}
+
+/** Search TMDB for an actor or director to watch. */
+export async function searchPeople(
+  query: string,
+  signal?: AbortSignal,
+): Promise<PersonHit[]> {
+  const json = await request<{ people: PersonHit[] }>(
+    `/api/screen/search?q=${encodeURIComponent(query)}`,
+    signal ? { signal } : undefined,
+  );
+  return json.people;
 }
 
 export interface LatestRelease {

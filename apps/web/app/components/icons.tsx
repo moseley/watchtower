@@ -1,10 +1,12 @@
 import {
   AudioLines,
   Bell,
+  Clapperboard,
   CloudRain,
   CloudSun,
   Crosshair,
   Eye,
+  Film,
   Info,
   Layers,
   Plus,
@@ -21,10 +23,12 @@ import {
 export {
   AudioLines,
   Bell,
+  Clapperboard,
   CloudRain,
   CloudSun,
   Crosshair,
   Eye,
+  Film,
   Info,
   Layers,
   Plus,
@@ -40,7 +44,9 @@ export type { LucideIcon };
 
 /** The icon that represents a source in nav and filters. */
 export function sourceIcon(source: string): LucideIcon {
-  return source === "music" ? AudioLines : CloudSun;
+  if (source === "music") return AudioLines;
+  if (source === "screen") return Clapperboard;
+  return CloudSun;
 }
 
 /**
@@ -49,6 +55,7 @@ export function sourceIcon(source: string): LucideIcon {
  */
 export function watchIcon(source: string, metric: string | undefined): LucideIcon {
   if (source === "music") return AudioLines;
+  if (source === "screen") return Film;
   if (metric === "precipitation_probability") return CloudRain;
   if (metric === "wind_speed") return Wind;
   if (metric === "temperature") return ThermometerSun;

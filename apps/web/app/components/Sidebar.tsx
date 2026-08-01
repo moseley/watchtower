@@ -1,7 +1,7 @@
 "use client";
 
 import { Logo } from "./Logo";
-import { AudioLines, Bell, CloudSun, Layers, Plus, Settings, User } from "./icons";
+import { AudioLines, Bell, Clapperboard, CloudSun, Layers, Plus, Settings, User } from "./icons";
 import type { LucideIcon } from "./icons";
 import type { ListView, SourceFilter } from "./types";
 
@@ -48,7 +48,7 @@ export function Sidebar({
 }: {
   view: ListView;
   sourceFilter: SourceFilter;
-  counts: { all: number; weather: number; music: number };
+  counts: { all: number; weather: number; music: number; screen: number };
   onNewWatch: () => void;
   onSelectSource: (next: SourceFilter) => void;
   onSelectView: (next: ListView) => void;
@@ -95,6 +95,13 @@ export function Sidebar({
           count={counts.music}
           active={onWatches && sourceFilter === "music"}
           onClick={() => onSelectSource("music")}
+        />
+        <NavRow
+          icon={Clapperboard}
+          label="Film & TV"
+          count={counts.screen}
+          active={onWatches && sourceFilter === "screen"}
+          onClick={() => onSelectSource("screen")}
         />
       </nav>
 
