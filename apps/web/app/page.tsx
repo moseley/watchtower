@@ -6,7 +6,7 @@ import { Sidebar } from "./components/Sidebar";
 import { SlideOver } from "./components/SlideOver";
 import { WatchCard } from "./components/WatchCard";
 import { WatchForm } from "./components/WatchForm";
-import { AudioLines, Bell, CloudSun, Layers, Plus, RefreshCw, watchIcon } from "./components/icons";
+import { AudioLines, Bell, CloudSun, Layers, Plus, watchIcon } from "./components/icons";
 import { Button } from "./components/primitives";
 import type { LatestRelease } from "@watchtower/types";
 import type {
@@ -491,12 +491,6 @@ export default function Home() {
         ? "Weather watches"
         : "Music watches";
 
-  function refreshAll() {
-    if (!ownerId) return;
-    void refreshWatches(ownerId);
-    void refreshNotifications(ownerId);
-  }
-
   function openBuilder() {
     setStatus("");
     setBuilderOpen(true);
@@ -532,14 +526,6 @@ export default function Home() {
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={refreshAll}
-              className="hidden items-center gap-2 rounded-control border border-hairline bg-surface px-3.5 py-2 text-[13.5px] font-medium text-ink transition-colors hover:border-hairline-strong lg:flex"
-            >
-              <RefreshCw size={15} />
-              Refresh
-            </button>
             <button
               type="button"
               onClick={openBuilder}
