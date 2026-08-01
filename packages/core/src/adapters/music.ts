@@ -47,6 +47,27 @@ async function throttle(): Promise<void> {
 }
 
 /**
+ * Throttled MusicBrainz request. They answer 503 when they judge a client to
+ * be going too fast even within the documented rate, so back off and retry
+ * rather than surfacing it as a failure.
+ */
+async function mbFetch(
+  url: string,
+  fetchImpl: typeof fetch,
+  init?: RequestInit,
+): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    await throttle();
+    const res = await fetchImpl(url, {
+      ...init,
+      headers: { "User-Agent": USER_AGENT, ...(init?.headers ?? {}) },
+    });
+    if (res.status !== 503 || attempt >= 2) return res;
+    await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+  }
+}
+
+/**
  * Best-effort artwork and store link from iTunes. Never blocks an alert —
  * detection is MusicBrainz's job; this only decorates the result.
  */
@@ -97,8 +118,7 @@ export const musicAdapter: SourceAdapter<MusicWatchConfig> = {
     const query = `arid:${config.artist.mbid} AND firstreleasedate:[${from} TO ${today}]`;
     const url = `${MB_ROOT}/release-group?query=${encodeURIComponent(query)}&fmt=json&limit=50`;
 
-    await throttle();
-    const res = await ctx.fetch(url, { headers: { "User-Agent": USER_AGENT } });
+    const res = await mbFetch(url, ctx.fetch);
     if (!res.ok) {
       throw new Error(`MusicBrainz responded ${res.status}`);
     }
@@ -143,6 +163,68 @@ export const musicAdapter: SourceAdapter<MusicWatchConfig> = {
   },
 };
 
+export interface LatestRelease {
+  /** YYYY-MM-DD */
+  date: string;
+  title: string;
+  type: string;
+}
+
+/** Windows to try, newest first, before giving up on finding a release. */
+const LOOKUP_WINDOWS_YEARS = [2, 10, 40];
+
+function typeClause(includeSingles: boolean): string {
+  return includeSingles
+    ? "(primarytype:album OR primarytype:ep OR primarytype:single)"
+    : "(primarytype:album OR primarytype:ep)";
+}
+
+/**
+ * The artist's most recent release, for showing how long it has been since
+ * they last put something out.
+ *
+ * Browsing an artist's release-groups is no good here: MusicBrainz returns
+ * them unordered and prolific artists have hundreds (Radiohead has 584), so
+ * taking the first page and sorting would quietly miss newer records.
+ * Instead this searches a bounded date window and widens it only when nothing
+ * is found, which keeps the common case to a single request.
+ */
+export async function getLatestRelease(
+  mbid: string,
+  { includeSingles = false }: { includeSingles?: boolean } = {},
+  fetchImpl: typeof fetch = fetch,
+): Promise<LatestRelease | null> {
+  const now = new Date();
+  const today = toDateString(now);
+
+  for (const years of LOOKUP_WINDOWS_YEARS) {
+    const from = toDateString(addDays(now, -Math.round(years * 365.25)));
+    const query = `arid:${mbid} AND firstreleasedate:[${from} TO ${today}] AND ${typeClause(includeSingles)}`;
+    const url = `${MB_ROOT}/release-group?query=${encodeURIComponent(query)}&fmt=json&limit=100`;
+
+    const res = await mbFetch(url, fetchImpl);
+    if (!res.ok) throw new Error(`MusicBrainz responded ${res.status}`);
+    const json = (await res.json()) as { "release-groups"?: ReleaseGroup[] };
+
+    const best = (json["release-groups"] ?? [])
+      // Partial dates ("2024") mean the day isn't actually known, so they
+      // can't be turned into an accurate elapsed time.
+      .filter((g) => g["first-release-date"]?.length === 10)
+      .filter((g) => g["first-release-date"]! <= today)
+      .sort((a, b) => b["first-release-date"]!.localeCompare(a["first-release-date"]!))
+      .at(0);
+
+    if (best) {
+      return {
+        date: best["first-release-date"]!,
+        title: best.title,
+        type: best["primary-type"] ?? "Release",
+      };
+    }
+  }
+  return null;
+}
+
 /** Artist search for the watch-creation picker. */
 export async function searchArtists(
   query: string,
@@ -151,8 +233,7 @@ export async function searchArtists(
   { mbid: string; name: string; disambiguation?: string; country?: string; type?: string }[]
 > {
   const url = `${MB_ROOT}/artist?query=${encodeURIComponent(query)}&fmt=json&limit=8`;
-  await throttle();
-  const res = await fetchImpl(url, { headers: { "User-Agent": USER_AGENT } });
+  const res = await mbFetch(url, fetchImpl);
   if (!res.ok) {
     throw new Error(`MusicBrainz responded ${res.status}`);
   }

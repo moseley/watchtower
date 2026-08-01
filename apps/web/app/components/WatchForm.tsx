@@ -58,11 +58,19 @@ export interface WatchFormProps {
   musicCount: number;
   musicLimit: number;
   musicFull: boolean;
+  lastRelease: { date: string; title: string; type: string } | null;
+  loadingRelease: boolean;
 
   canCreate: boolean;
   busy: boolean;
   onCreate: () => void;
   onCancel: () => void;
+}
+
+function daysSince(date: string): number {
+  // Date-only, so anchor at midday UTC to avoid a timezone off-by-one.
+  const then = new Date(`${date}T12:00:00Z`).getTime();
+  return Math.max(0, Math.floor((Date.now() - then) / 86_400_000));
 }
 
 /** Plain restatement of the rule being built. */
@@ -119,6 +127,8 @@ export function WatchForm(props: WatchFormProps) {
     musicCount,
     musicLimit,
     musicFull,
+    lastRelease,
+    loadingRelease,
     canCreate,
     busy,
     onCreate,
@@ -308,7 +318,19 @@ export function WatchForm(props: WatchFormProps) {
                     change
                   </button>
                 </div>
-              ) : (
+              ) : null}
+
+              {artist && (
+                <p className="text-[12.5px] text-faint">
+                  {loadingRelease
+                    ? "Checking their last release…"
+                    : lastRelease
+                      ? `Last release: ${lastRelease.title} — ${daysSince(lastRelease.date)} days ago`
+                      : "No dated release found for them yet"}
+                </p>
+              )}
+
+              {!artist && (
                 <>
                   <TextField
                     id="artist"

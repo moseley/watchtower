@@ -8,6 +8,7 @@ import { WatchCard } from "./components/WatchCard";
 import { WatchForm } from "./components/WatchForm";
 import { AudioLines, Bell, CloudSun, Layers, Plus, RefreshCw, watchIcon } from "./components/icons";
 import { Button } from "./components/primitives";
+import type { LatestRelease } from "@watchtower/types";
 import type {
   ArtistHit,
   ListView,
@@ -110,6 +111,8 @@ export default function Home() {
   const [noResults, setNoResults] = useState(false);
   const [artist, setArtist] = useState<ArtistHit | null>(null);
   const [includeSingles, setIncludeSingles] = useState(false);
+  const [lastRelease, setLastRelease] = useState<LatestRelease | null>(null);
+  const [loadingRelease, setLoadingRelease] = useState(false);
 
   const musicCount = watches.filter((w) => w.source === "music").length;
 
@@ -305,6 +308,34 @@ export default function Home() {
       controller.abort();
     };
   }, [locationText, locationEdited, source]);
+
+  // Show where the artist's catalogue stands while the watch is being set up,
+  // so "how long since their last release" is visible before creating it.
+  // Re-runs on the singles toggle, which changes what counts as a release.
+  useEffect(() => {
+    if (!artist) {
+      setLastRelease(null);
+      setLoadingRelease(false);
+      return;
+    }
+    const controller = new AbortController();
+    setLoadingRelease(true);
+    (async () => {
+      try {
+        const json = await api<{ release: LatestRelease | null }>(
+          `/api/music/latest-release?mbid=${encodeURIComponent(artist.mbid)}&includeSingles=${includeSingles}`,
+          { signal: controller.signal },
+        );
+        setLastRelease(json.release);
+      } catch (err) {
+        if ((err as Error).name === "AbortError") return; // superseded
+        setLastRelease(null);
+      } finally {
+        if (!controller.signal.aborted) setLoadingRelease(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [artist, includeSingles]);
 
   /** Convert the entered value so switching scales keeps the same weather. */
   function switchTempUnit(next: TempUnit) {
@@ -740,6 +771,8 @@ export default function Home() {
           musicCount={musicCount}
           musicLimit={MUSIC_LIMIT}
           musicFull={musicFull}
+          lastRelease={lastRelease}
+          loadingRelease={loadingRelease}
           canCreate={canCreate}
           busy={busy}
           onCreate={onCreate}

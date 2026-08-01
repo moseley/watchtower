@@ -7,6 +7,7 @@ export interface WatchRow {
     rule?: { metric?: string; comparator?: string; threshold?: number; unit?: string };
     artist?: { name?: string; mbid?: string };
     includeSingles?: boolean;
+    lastRelease?: { date: string; title: string; type: string };
   };
   // Already returned by /api/watches — the list route selects no subset, so
   // every scalar column comes back. Typing them here surfaces what is there.

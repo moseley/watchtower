@@ -71,15 +71,23 @@ export function describeWatch(w: WatchRow, current?: number): WatchDisplay {
   const firing = matchedAt !== null && Date.now() - matchedAt < DAY_MS;
 
   if (w.source === "music") {
-    // Elapsed time is fully derivable: since the last release we alerted on,
-    // or since the watch began if it has not fired yet.
-    const since = matchedAt ?? (w.createdAt ? new Date(w.createdAt).getTime() : null);
+    // Prefer a release we actually alerted on, then the catalogue position
+    // recorded when the watch was made, and only fall back to the watch's own
+    // start date for watches created before that lookup existed.
+    const recorded = w.config.lastRelease?.date
+      ? // Date-only, so anchor at midday UTC to avoid a timezone off-by-one.
+        new Date(`${w.config.lastRelease.date}T12:00:00Z`).getTime()
+      : null;
+    const since = matchedAt ?? recorded ?? (w.createdAt ? new Date(w.createdAt).getTime() : null);
     if (since === null) return { firing, value: null, delta: "no activity yet", fill: 0 };
+
     const days = Math.max(0, Math.floor((Date.now() - since) / DAY_MS));
+    const delta =
+      matchedAt || recorded !== null ? "since last release" : "since you started watching";
     return {
       firing,
       value: `${days}d`,
-      delta: matchedAt ? "since last release" : "since you started watching",
+      delta,
       fill: 0, // no numeric threshold — the spec leaves this track empty
     };
   }

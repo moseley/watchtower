@@ -47,6 +47,7 @@ import {
   createOwner,
   createWatch,
   deleteWatch,
+  fetchLatestRelease,
   geocode,
   listNotifications,
   listWatches,
@@ -55,6 +56,7 @@ import {
   searchArtists,
   type ArtistHit,
   type GeocodeResult,
+  type LatestRelease,
   type NotificationRow,
   type WatchRow,
 } from "./lib/api";
@@ -91,6 +93,12 @@ const METRIC_OPTIONS: { value: Metric; label: string }[] = [
   { value: "precipitation_probability", label: "Rain %" },
   { value: "wind_speed", label: "Wind" },
 ];
+
+function daysSince(date: string): number {
+  // Date-only, so anchor at midday UTC to avoid a timezone off-by-one.
+  const then = new Date(`${date}T12:00:00Z`).getTime();
+  return Math.max(0, Math.floor((Date.now() - then) / 86_400_000));
+}
 
 const METRIC_NAMES: Record<Metric, string> = {
   temperature: "temperature",
@@ -153,6 +161,8 @@ export default function App() {
   const [noResults, setNoResults] = useState(false);
   const [artist, setArtist] = useState<ArtistHit | null>(null);
   const [includeSingles, setIncludeSingles] = useState(false);
+  const [lastRelease, setLastRelease] = useState<LatestRelease | null>(null);
+  const [loadingRelease, setLoadingRelease] = useState(false);
 
   const musicCount = watches.filter((w) => w.source === "music").length;
 
@@ -373,6 +383,30 @@ export default function App() {
       controller.abort();
     };
   }, [locationText, locationEdited, source]);
+
+  // Show where the artist's catalogue stands while the watch is being set up,
+  // so "how long since their last release" is visible before creating it.
+  // Re-runs on the singles toggle, which changes what counts as a release.
+  useEffect(() => {
+    if (!artist) {
+      setLastRelease(null);
+      setLoadingRelease(false);
+      return;
+    }
+    const controller = new AbortController();
+    setLoadingRelease(true);
+    (async () => {
+      try {
+        setLastRelease(await fetchLatestRelease(artist.mbid, includeSingles, controller.signal));
+      } catch (err) {
+        if ((err as Error).name === "AbortError") return; // superseded
+        setLastRelease(null);
+      } finally {
+        if (!controller.signal.aborted) setLoadingRelease(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [artist, includeSingles]);
 
   /** Convert the entered value so switching scales keeps the same weather. */
   function switchTempUnit(next: TempUnit) {
@@ -907,7 +941,19 @@ export default function App() {
                         change
                       </Text>
                     </View>
-                  ) : (
+                  ) : null}
+
+                  {artist && (
+                    <Text style={styles.hint}>
+                      {loadingRelease
+                        ? "Checking their last release…"
+                        : lastRelease
+                          ? `Last release: ${lastRelease.title} — ${daysSince(lastRelease.date)} days ago`
+                          : "No dated release found for them yet"}
+                    </Text>
+                  )}
+
+                  {!artist && (
                     <>
                       <View style={styles.inputWithIcon}>
                         <Search size={16} color={colors.faint} style={styles.inputIcon} />

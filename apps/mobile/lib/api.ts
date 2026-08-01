@@ -62,6 +62,7 @@ export interface WatchRow {
     rule?: { metric?: string; comparator?: string; threshold?: number; unit?: string };
     artist?: { name?: string; mbid?: string };
     includeSingles?: boolean;
+    lastRelease?: { date: string; title: string; type: string };
   };
   // Already returned by /api/watches — the list route selects no subset, so
   // every scalar column comes back. Typing them here surfaces what is there.
@@ -113,6 +114,25 @@ export async function listNotifications(ownerId: string): Promise<NotificationRo
     `/api/notifications?ownerId=${encodeURIComponent(ownerId)}`,
   );
   return json.notifications;
+}
+
+export interface LatestRelease {
+  date: string;
+  title: string;
+  type: string;
+}
+
+/** The artist's most recent release, for showing how long it has been. */
+export async function fetchLatestRelease(
+  mbid: string,
+  includeSingles: boolean,
+  signal?: AbortSignal,
+): Promise<LatestRelease | null> {
+  const json = await request<{ release: LatestRelease | null }>(
+    `/api/music/latest-release?mbid=${encodeURIComponent(mbid)}&includeSingles=${includeSingles}`,
+    signal ? { signal } : undefined,
+  );
+  return json.release;
 }
 
 export interface GeocodeResult {

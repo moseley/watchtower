@@ -1,5 +1,6 @@
 import { type Prisma, prisma } from "@watchtower/db";
 import { CreateWatchInputSchema, WATCH_LIMITS } from "@watchtower/types";
+import { lookupLatestRelease } from "../../../lib/latest-release";
 
 export const dynamic = "force-dynamic";
 
@@ -73,12 +74,26 @@ export async function POST(request: Request) {
     }
   }
 
+  // Record where the artist's catalogue stands right now, so the card can show
+  // time since their last release instead of since the watch began. Looked up
+  // server-side so it is present however the watch was created, and best-effort
+  // because a MusicBrainz hiccup must not stop someone making a watch.
+  let storedConfig: unknown = config;
+  if (source === "music") {
+    try {
+      const release = await lookupLatestRelease(config.artist.mbid, config.includeSingles);
+      if (release) storedConfig = { ...config, lastRelease: release };
+    } catch {
+      // leave it off; the card falls back to the watch's own start date
+    }
+  }
+
   const watch = await prisma.watch.create({
     data: {
       ownerId,
       source,
       label,
-      config: config as unknown as Prisma.InputJsonValue,
+      config: storedConfig as Prisma.InputJsonValue,
     },
   });
 
