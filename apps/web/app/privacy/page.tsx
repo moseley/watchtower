@@ -18,25 +18,25 @@ const LAST_UPDATED = "31 July 2026";
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="mt-8">
-      <h2 className="text-lg font-bold">{title}</h2>
-      <div className="mt-2 space-y-3 text-sm leading-relaxed text-slate-300">{children}</div>
+      <h2 className="text-[17px] font-semibold text-ink">{title}</h2>
+      <div className="mt-2 space-y-3 text-[14px] leading-relaxed text-muted">{children}</div>
     </section>
   );
 }
 
 export default function PrivacyPage() {
   return (
-    <main className="min-h-screen w-full bg-slate-950 text-white">
+    <main className="min-h-screen w-full bg-canvas text-ink">
       <div className="mx-auto w-full max-w-2xl px-5 py-12">
-        <Link href="/" className="flex items-center gap-3 text-slate-400 hover:text-white">
+        <Link href="/" className="flex items-center gap-3 text-muted hover:text-ink">
           <Logo className="h-8 w-8" />
-          <span className="text-sm">← Back to Watchtower</span>
+          <span className="text-[14px]">← Back to Watchtower</span>
         </Link>
 
-        <h1 className="mt-8 text-3xl font-extrabold">Privacy</h1>
-        <p className="mt-2 text-sm text-slate-400">Last updated {LAST_UPDATED}</p>
+        <h1 className="mt-8 text-[28px] font-bold tracking-[-.03em]">Privacy</h1>
+        <p className="mt-2 font-mono text-[11px] text-faint">Last updated {LAST_UPDATED}</p>
 
-        <p className="mt-6 text-sm leading-relaxed text-slate-300">
+        <p className="mt-6 text-[14px] leading-relaxed text-muted">
           Watchtower watches sources you choose and notifies you when something matches. It
           collects only what it needs to do that. There are no adverts, no analytics, and no
           third-party trackers, and your data is never sold.

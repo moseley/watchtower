@@ -1,26 +1,53 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+ * "Atlas" design tokens.
+ *
+ * The spec hands these off as `theme.extend` in tailwind.config.js, but this
+ * app runs Tailwind v4, which has no JS config — tokens are declared here and
+ * utilities are generated from the variable names. Names match the spec except
+ * that v4 derives utilities from kebab-case, so `accentTint` becomes
+ * `bg-accent-tint` and `neutralBar` becomes `bg-neutral-bar`.
+ *
+ * The theme is deliberately single-mode: Atlas is a light design, so the old
+ * prefers-color-scheme dark block is gone rather than half-translated.
+ */
+@theme {
+  --color-canvas: #f4f5f3; /* app background */
+  --color-surface: #ffffff; /* cards, slide-over */
+  --color-sidebar: #eff1ec; /* nav rail, segmented-control track */
+  --color-hairline: #dcdfd9; /* all borders */
+  --color-field: #fafbf9; /* input backgrounds */
+  --color-ink: #14181a; /* primary text */
+  --color-muted: #6b7472; /* secondary text */
+  --color-faint: #8b948f; /* meta, counts, timestamps */
+  --color-accent: #0f6b4f; /* deep green — primary action + firing state */
+  --color-accent-tint: #e6f0ea; /* accent backgrounds, icon chips */
+  --color-neutral-bar: #aab3ae; /* inactive progress fill */
+  --color-track: #eaece7; /* progress track */
+
+  /* States the spec calls out inline rather than as named tokens. */
+  --color-sidebar-active: #e1e6df;
+  --color-chip-idle: #eef0ec;
+  --color-hairline-strong: #cfd4cd;
+
+  --font-sans: var(--font-space-grotesk), system-ui, sans-serif;
+  --font-mono: var(--font-ibm-plex-mono), ui-monospace, monospace;
+
+  --radius-card: 14px;
+  --radius-control: 10px;
+
+  --shadow-card: 0 1px 2px rgba(20, 25, 20, 0.04);
+  --shadow-slideover: -14px 0 40px rgba(20, 25, 20, 0.06);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
 }

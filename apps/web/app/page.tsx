@@ -1,69 +1,30 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Logo } from "./components/Logo";
+import { MobileTabBar } from "./components/MobileTabBar";
+import { Sidebar } from "./components/Sidebar";
+import { SlideOver } from "./components/SlideOver";
+import { WatchCard } from "./components/WatchCard";
+import { WatchForm } from "./components/WatchForm";
+import { AudioLines, Bell, CloudSun, Layers, Plus, RefreshCw, watchIcon } from "./components/icons";
+import { Button } from "./components/primitives";
+import type {
+  ArtistHit,
+  ListView,
+  NotificationRow,
+  Place,
+  SourceFilter,
+  WatchRow,
+} from "./components/types";
+import { describeWatch, timeAgo } from "./components/watch-display";
 
 type Source = "weather" | "music";
 type Metric = "temperature" | "precipitation_probability" | "wind_speed";
 type Comparator = "below" | "above";
-
-interface WatchRow {
-  id: string;
-  label: string;
-  source: string;
-  config: {
-    location?: { label?: string };
-    rule?: { metric?: string; comparator?: string; threshold?: number; unit?: string };
-    artist?: { name?: string; mbid?: string };
-    includeSingles?: boolean;
-  };
-}
-
-interface NotificationRow {
-  id: string;
-  title: string;
-  body: string;
-  status: string;
-  createdAt: string;
-  source: string;
-  watchLabel: string;
-}
-
-function timeAgo(iso: string): string {
-  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}
-
-function iconForSource(source: string, title: string): string {
-  if (source === "music") return "🎤";
-  const leading = Array.from(title)[0];
-  // The engine already picks a fitting emoji per alert; reuse it when present.
-  return leading && /\p{Extended_Pictographic}/u.test(leading) ? leading : "🔔";
-}
-
-interface Place {
-  latitude: number;
-  longitude: number;
-  label: string;
-}
-
-interface ArtistHit {
-  mbid: string;
-  name: string;
-  disambiguation?: string;
-  country?: string;
-  type?: string;
-}
+type TempUnit = "F" | "C";
 
 const OWNER_KEY = "watchtower.ownerId";
 const MUSIC_LIMIT = 5;
-
-type TempUnit = "F" | "C";
-type ListView = "watches" | "history";
 
 /** How many alerts to show at a time before "View more". */
 const HISTORY_PAGE = 10;
@@ -74,45 +35,14 @@ const DEFAULT_THRESHOLD: Record<TempUnit, string> = { F: "85", C: "29" };
 const fahrenheitToCelsius = (f: number) => Math.round(((f - 32) * 5) / 9);
 const celsiusToFahrenheit = (c: number) => Math.round((c * 9) / 5 + 32);
 
-/** e.g. "temperature above 85°F", "rain above 60%" */
-function describeRule(w: WatchRow): string {
-  if (w.source === "music") {
-    return w.config.includeSingles ? "new albums, EPs & singles" : "new albums & EPs";
-  }
-  const rule = w.config.rule;
-  if (!rule) return "";
-  const suffix =
-    rule.metric === "temperature"
-      ? `°${rule.unit ?? "F"}`
-      : rule.metric === "precipitation_probability"
-        ? "%"
-        : ` ${rule.unit ?? "mph"}`;
-  return `${rule.metric?.replace(/_/g, " ")} ${rule.comparator} ${rule.threshold}${suffix}`;
-}
-
 /** Cap on waiting for a geolocation fix; the browser default is Infinity. */
 const LOCATION_TIMEOUT_MS = 8000;
-
-const METRICS: { key: Metric; label: string }[] = [
-  { key: "temperature", label: "Temperature" },
-  { key: "precipitation_probability", label: "Rain %" },
-  { key: "wind_speed", label: "Wind" },
-];
 
 const METRIC_NAMES: Record<Metric, string> = {
   temperature: "temperature",
   precipitation_probability: "rain",
   wind_speed: "wind",
 };
-
-function iconFor(w: WatchRow): string {
-  if (w.source === "music") return "🎤";
-  const rule = w.config.rule;
-  if (rule?.metric === "temperature") return rule.comparator === "below" ? "❄️" : "☀️";
-  if (rule?.metric === "precipitation_probability") return "🌧️";
-  if (rule?.metric === "wind_speed") return "💨";
-  return "🔔";
-}
 
 function urlBase64ToUint8Array(base64: string): Uint8Array {
   const padding = "=".repeat((4 - (base64.length % 4)) % 4);
@@ -146,6 +76,11 @@ export default function Home() {
   const [listView, setListView] = useState<ListView>("watches");
   const [historyLimit, setHistoryLimit] = useState(HISTORY_PAGE);
   const [busy, setBusy] = useState(false);
+
+  // presentation only — which sources the grid shows, and whether the builder
+  // panel is open. Neither touches what is fetched or how a watch is made.
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [builderOpen, setBuilderOpen] = useState(false);
 
   // weather form
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -260,7 +195,7 @@ export default function Home() {
       });
       localStorage.setItem(OWNER_KEY, reg.ownerId);
       setOwnerId(reg.ownerId);
-      setStatus("Notifications enabled ✓");
+      setStatus("Notifications enabled");
       await refreshWatches(reg.ownerId);
     } catch (err) {
       setStatus(`Setup failed: ${(err as Error).message}`);
@@ -471,8 +406,9 @@ export default function Home() {
     try {
       if (source === "weather") await createWeatherWatch();
       else await createMusicWatch();
-      setStatus("Watch created ✓");
+      setStatus("Watch created");
       await refreshWatches(ownerId);
+      setBuilderOpen(false);
     } catch (err) {
       setStatus(`${(err as Error).message}`);
     } finally {
@@ -503,426 +439,315 @@ export default function Home() {
       ? !thresholdProblem && locationText.trim() !== ""
       : Boolean(artist) && !musicFull);
 
-  const inputClass =
-    "w-full rounded-lg bg-slate-950 px-4 py-3 text-white placeholder-slate-600 outline-none ring-blue-600 focus:ring-2";
+  const counts = {
+    all: watches.length,
+    weather: watches.filter((w) => w.source === "weather").length,
+    music: musicCount,
+  };
+  const visibleWatches =
+    sourceFilter === "all" ? watches : watches.filter((w) => w.source === sourceFilter);
+  const firingCount = watches.filter((w) => describeWatch(w).firing).length;
+  const lastCheckedAt = watches
+    .map((w) => w.lastCheckedAt)
+    .filter((v): v is string => Boolean(v))
+    .sort()
+    .at(-1);
+
+  const heading =
+    sourceFilter === "all"
+      ? "All watches"
+      : sourceFilter === "weather"
+        ? "Weather watches"
+        : "Music watches";
+
+  function refreshAll() {
+    if (!ownerId) return;
+    void refreshWatches(ownerId);
+    void refreshNotifications(ownerId);
+  }
+
+  function openBuilder() {
+    setStatus("");
+    setBuilderOpen(true);
+  }
 
   return (
-    <main className="min-h-screen w-full bg-slate-950 text-white">
-      <div className="mx-auto w-full max-w-xl px-5 py-12">
-        <div className="flex items-center gap-3.5">
-          <Logo className="h-14 w-14 shrink-0" />
-          <div>
-            <h1 className="text-4xl font-extrabold leading-none">Watchtower</h1>
-            <p className="mt-2 text-sm text-slate-400">
-              Watch a source, match your criteria, get notified.
-            </p>
+    <div className="flex min-h-screen bg-canvas">
+      <Sidebar
+        view={listView}
+        sourceFilter={sourceFilter}
+        counts={counts}
+        onNewWatch={openBuilder}
+        onSelectSource={(next) => {
+          setSourceFilter(next);
+          setListView("watches");
+        }}
+        onSelectView={setListView}
+      />
+
+      <main className="flex min-w-0 flex-1 flex-col gap-5 px-5 pb-28 pt-5 lg:px-7 lg:pb-6 lg:pt-6">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-[26px] font-bold tracking-[-.03em] text-ink lg:text-[28px]">
+              {listView === "watches" ? heading : listView === "history" ? "History" : "Settings"}
+            </h1>
+            {listView === "watches" && (
+              <p className="mt-1 text-[13px] text-muted">
+                {firingCount} firing now
+                {lastCheckedAt ? ` · last check ${timeAgo(lastCheckedAt)}` : ""}
+              </p>
+            )}
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={refreshAll}
+              className="hidden items-center gap-2 rounded-control border border-hairline bg-surface px-3.5 py-2 text-[13.5px] font-medium text-ink transition-colors hover:border-hairline-strong lg:flex"
+            >
+              <RefreshCw size={15} />
+              Refresh
+            </button>
+            <button
+              type="button"
+              onClick={openBuilder}
+              aria-label="New watch"
+              className="grid h-[34px] w-[34px] place-items-center rounded-control bg-accent text-white transition-colors hover:bg-[#0c5740] lg:hidden"
+            >
+              <Plus size={18} />
+            </button>
           </div>
         </div>
-        {status && <p className="mt-3 text-sm text-slate-300">{status}</p>}
 
         {!supported && (
-          <div className="mt-6 rounded-xl bg-amber-950/60 p-4 text-sm text-amber-200">
-            This browser doesn&apos;t support push notifications. On iPhone, add this site to
-            your Home Screen first (Share → Add to Home Screen), then open it from there.
+          <div className="rounded-card border border-hairline bg-surface p-4 text-[13.5px] text-muted">
+            This browser doesn&apos;t support push notifications. On iPhone, add this site to your
+            Home Screen first (Share → Add to Home Screen), then open it from there.
           </div>
         )}
 
         {supported && !ownerId && (
-          <div className="mt-6 rounded-2xl bg-slate-900 p-5">
-            <h2 className="text-lg font-bold">Turn on notifications</h2>
-            <p className="mt-1 text-sm text-slate-400">
-              Watchtower alerts you through browser notifications — they arrive even when this
-              tab is closed.
+          <div className="rounded-card border border-hairline bg-surface p-5 shadow-card">
+            <h2 className="text-[15px] font-semibold text-ink">Turn on notifications</h2>
+            <p className="mt-1 text-[13.5px] text-muted">
+              Watchtower alerts you through browser notifications — they arrive even when this tab
+              is closed.
             </p>
-            <button
-              className="mt-4 rounded-xl bg-blue-600 px-5 py-3 font-semibold hover:bg-blue-500 disabled:bg-slate-700"
-              onClick={enableNotifications}
-              disabled={busy}
-            >
+            <Button className="mt-4" onClick={enableNotifications} disabled={busy}>
               {busy ? "Setting up…" : "Enable notifications"}
-            </button>
+            </Button>
           </div>
         )}
 
-        <div className={`mt-6 rounded-2xl bg-slate-900 p-5 ${ownerId ? "" : "opacity-50"}`}>
-          <div className="flex gap-2">
-            <Tab label="🌤️ Weather" active={source === "weather"} onClick={() => setSource("weather")} />
-            <Tab label="🎤 Music" active={source === "music"} onClick={() => setSource("music")} />
-          </div>
+        {status && <p className="text-[13px] text-muted">{status}</p>}
 
-          {source === "weather" ? (
-            <>
-              <label className="mt-5 block text-xs text-slate-400">
-                Location (city or zip code)
-              </label>
-              <div className="mt-1.5 flex gap-2">
-                <input
-                  className={inputClass}
-                  value={locationText}
-                  onChange={(e) => {
-                    userTypedRef.current = true;
-                    setLocationText(e.target.value);
-                    setLocationEdited(true);
-                  }}
-                  placeholder="e.g. Honolulu or 96815"
-                  disabled={!ownerId}
-                />
-                <button
-                  className="rounded-lg bg-slate-700 px-4 hover:bg-slate-600 disabled:opacity-50"
-                  onClick={() => useCurrentLocation({ explicit: true })}
-                  disabled={!ownerId || locating}
-                  title="Use current location"
-                >
-                  {locating ? "…" : "📍"}
-                </button>
-              </div>
-              {coords && !locationEdited && (
-                <p className="mt-1.5 text-xs text-green-400">
-                  ✓ {locationText} ({coords.latitude.toFixed(3)},{" "}
-                  {coords.longitude.toFixed(3)})
-                </p>
-              )}
-              {locationEdited && locationHits.length > 0 && (
-                <div className="mt-2 space-y-1.5">
-                  {locationHits.map((place) => (
-                    <button
-                      key={`${place.latitude},${place.longitude}`}
-                      className="flex w-full items-center gap-3 rounded-lg bg-slate-950 p-3 text-left hover:bg-slate-800"
-                      onClick={() => {
-                        setCoords({ latitude: place.latitude, longitude: place.longitude });
-                        setLocationText(place.label);
-                        setLocationEdited(false);
-                        setLocationHits([]);
-                      }}
-                    >
-                      <span>📍</span>
-                      <span className="flex-1 text-sm font-semibold">{place.label}</span>
-                      <span className="text-xs text-slate-500">select</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              {locationEdited && locationHits.length === 0 && (
-                <p className="mt-1.5 text-xs text-slate-500">
-                  {searchingLocation
-                    ? "Looking up…"
-                    : locationText.trim().length < 2
-                      ? "Type a city or zip code"
-                      : "No match yet — the closest one is used when you create the watch"}
-                </p>
-              )}
+        {listView === "watches" && (
+          <>
+            {/* Mobile source filter */}
+            <div className="flex gap-2 overflow-x-auto lg:hidden">
+              {(
+                [
+                  { value: "all" as SourceFilter, label: `All ${counts.all}`, icon: Layers },
+                  { value: "weather" as SourceFilter, label: "Weather", icon: CloudSun },
+                  { value: "music" as SourceFilter, label: "Music", icon: AudioLines },
+                ] satisfies { value: SourceFilter; label: string; icon: typeof Layers }[]
+              ).map(({ value, label, icon: Icon }) => {
+                const active = sourceFilter === value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setSourceFilter(value)}
+                    className={`flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-[14px] font-medium transition-colors ${
+                      active
+                        ? "bg-ink text-white"
+                        : "border border-hairline bg-surface text-ink"
+                    }`}
+                  >
+                    <Icon size={15} />
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
 
-              <label className="mt-4 block text-xs text-slate-400">Metric</label>
-              <div className="mt-1.5 flex flex-wrap gap-2">
-                {METRICS.map((m) => (
-                  <Chip
-                    key={m.key}
-                    label={m.label}
-                    active={metric === m.key}
-                    onClick={() => setMetric(m.key)}
-                  />
+            {visibleWatches.length === 0 ? (
+              <p className="text-[14px] text-muted">
+                {watches.length === 0
+                  ? "No watches yet."
+                  : `No ${sourceFilter} watches yet.`}
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3">
+                {visibleWatches.map((w) => (
+                  <WatchCard key={w.id} watch={w} onDelete={onDelete} />
                 ))}
               </div>
+            )}
 
-              {metric === "temperature" && (
-                <>
-                  <label className="mt-4 block text-xs text-slate-400">When it goes</label>
-                  <div className="mt-1.5 flex gap-2">
-                    <Chip
-                      label="❄️ Below"
-                      active={comparator === "below"}
-                      onClick={() => setComparator("below")}
-                    />
-                    <Chip
-                      label="☀️ Above"
-                      active={comparator === "above"}
-                      onClick={() => setComparator("above")}
-                    />
-                  </div>
-                </>
-              )}
-
-              {metric === "temperature" && (
-                <>
-                  <label className="mt-4 block text-xs text-slate-400">Units</label>
-                  <div className="mt-1.5 flex gap-2">
-                    <Chip
-                      label="°F"
-                      active={tempUnit === "F"}
-                      onClick={() => switchTempUnit("F")}
-                    />
-                    <Chip
-                      label="°C"
-                      active={tempUnit === "C"}
-                      onClick={() => switchTempUnit("C")}
-                    />
-                  </div>
-                </>
-              )}
-
-              <label className="mt-4 block text-xs text-slate-400">
-                Threshold{" "}
-                {metric === "temperature"
-                  ? `(°${tempUnit})`
-                  : metric === "wind_speed"
-                    ? "(mph)"
-                    : "(0–100 %)"}
-              </label>
-              <input
-                className={`${inputClass} mt-1.5 ${thresholdProblem ? "ring-2 ring-red-400" : ""}`}
-                value={threshold}
-                onChange={(e) => setThreshold(e.target.value)}
-                inputMode="numeric"
-                placeholder={metric === "temperature" ? DEFAULT_THRESHOLD[tempUnit] : "35"}
-                disabled={!ownerId}
-              />
-              {thresholdProblem && (
-                <p className="mt-1.5 text-xs text-red-400">{thresholdProblem}</p>
-              )}
-            </>
-          ) : (
-            <>
-              <div className="mt-5 flex items-baseline justify-between">
-                <label className="block text-xs text-slate-400">Search for an artist or band</label>
-                <span className="text-xs text-slate-500">
-                  {musicCount} / {MUSIC_LIMIT} watched
-                </span>
-              </div>
-              <div className="relative mt-1.5">
-                <input
-                  className={`${inputClass} pr-11`}
-                  value={artistQuery}
-                  onChange={(e) => setArtistQuery(e.target.value)}
-                  placeholder="Start typing a name…"
-                  autoComplete="off"
-                  disabled={!ownerId}
-                />
-                <span
-                  className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500"
-                  aria-hidden="true"
-                >
-                  {searching ? (
-                    <span className="block h-4 w-4 animate-spin rounded-full border-2 border-slate-700 border-t-blue-400 motion-reduce:animate-none" />
-                  ) : (
-                    "🔍"
-                  )}
-                </span>
-              </div>
-              <p className="sr-only" role="status" aria-live="polite">
-                {searching
-                  ? "Searching"
-                  : artistHits.length > 0
-                    ? `${artistHits.length} artists found`
-                    : ""}
-              </p>
-
-              {artist ? (
-                <div className="mt-3 flex items-center gap-3 rounded-xl border border-blue-600 bg-blue-950/40 p-3">
-                  <span className="text-xl">🎤</span>
-                  <div className="flex-1">
-                    <p className="font-semibold">{artist.name}</p>
-                    {artist.disambiguation && (
-                      <p className="text-xs text-slate-400">{artist.disambiguation}</p>
-                    )}
-                  </div>
-                  <button
-                    className="rounded-lg px-2 py-1 text-sm text-slate-400 hover:bg-slate-800"
-                    onClick={() => setArtist(null)}
-                  >
-                    change
-                  </button>
-                </div>
-              ) : (
-                artistHits.length === 0 ? (
-                  noResults && (
-                    <p className="mt-3 text-sm text-slate-500">
-                      No artists found for &ldquo;{artistQuery.trim()}&rdquo;.
-                    </p>
-                  )
-                ) : (
-                  <div className="mt-3 space-y-1.5">
-                    {artistHits.map((a) => (
-                      <button
-                        key={a.mbid}
-                        className="flex w-full items-center gap-3 rounded-lg bg-slate-950 p-3 text-left hover:bg-slate-800"
-                        onClick={() => {
-                          setArtist(a);
-                          setArtistHits([]);
-                        }}
+            {/* Recent activity — the history lives in its own view on mobile */}
+            {notifications.length > 0 && (
+              <section className="hidden lg:block">
+                <h2 className="mt-2 font-mono text-[10px] font-semibold uppercase tracking-[.09em] text-faint">
+                  Recent activity
+                </h2>
+                <ul className="mt-2">
+                  {notifications.slice(0, 4).map((n) => {
+                    const Icon = watchIcon(n.source, undefined);
+                    return (
+                      <li
+                        key={n.id}
+                        className="flex items-center gap-3 border-b border-hairline py-3 last:border-0"
                       >
-                        <div className="flex-1">
-                          <p className="text-sm font-semibold">{a.name}</p>
-                          <p className="text-xs text-slate-500">
-                            {[a.disambiguation, a.type, a.country].filter(Boolean).join(" · ") ||
-                              "artist"}
-                          </p>
-                        </div>
-                        <span className="text-xs text-slate-500">select</span>
-                      </button>
-                    ))}
-                  </div>
-                )
-              )}
+                        <Icon size={16} className="shrink-0 text-faint" />
+                        <span className="min-w-0 flex-1 truncate text-[14px] text-ink">
+                          {n.body}
+                        </span>
+                        <span className="shrink-0 font-mono text-[11px] text-faint">
+                          {timeAgo(n.createdAt)}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            )}
+          </>
+        )}
 
-              <label className="mt-4 flex items-center gap-2.5 text-sm text-slate-300">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-blue-600"
-                  checked={includeSingles}
-                  onChange={(e) => setIncludeSingles(e.target.checked)}
-                  disabled={!ownerId}
-                />
-                Include singles
-              </label>
-              <p className="mt-1 text-xs text-slate-500">
-                Albums and EPs are always included. Singles can be frequent for busy artists.
+        {listView === "history" && (
+          <div className="flex flex-col gap-2">
+            {notifications.length === 0 ? (
+              <p className="text-[14px] text-muted">
+                No alerts yet. They&apos;ll appear here as your watches fire.
               </p>
-
-              {musicFull && (
-                <p className="mt-3 text-xs text-amber-400">
-                  You&apos;re watching {MUSIC_LIMIT} artists — delete one to add another.
-                </p>
-              )}
-            </>
-          )}
-
-          <button
-            className="mt-5 w-full rounded-xl bg-blue-600 py-3.5 font-bold hover:bg-blue-500 disabled:bg-slate-700"
-            onClick={onCreate}
-            disabled={!canCreate}
-          >
-            {busy ? "Working…" : "Create watch"}
-          </button>
-        </div>
-
-        <div id="history" className="mt-8 flex gap-2">
-          <Tab
-            label={`Watches (${watches.length})`}
-            active={listView === "watches"}
-            onClick={() => setListView("watches")}
-          />
-          <Tab
-            label={`History (${notifications.length})`}
-            active={listView === "history"}
-            onClick={() => setListView("history")}
-          />
-        </div>
-
-        <div className="mt-3 space-y-2">
-          {listView === "watches" ? (
-            watches.length === 0 ? (
-              <p className="text-sm text-slate-500">No watches yet.</p>
             ) : (
-              watches.map((w) => (
-                <div key={w.id} className="flex items-center gap-3 rounded-xl bg-slate-900 p-4">
-                  <span className="text-xl">{iconFor(w)}</span>
-                  <div className="flex-1">
-                    <p className="font-semibold">
-                      {w.source === "music"
-                        ? (w.config.artist?.name ?? w.label)
-                        : (w.config.location?.label ?? w.label)}
-                    </p>
-                    <p className="text-sm text-slate-400">{describeRule(w)}</p>
-                  </div>
-                  <button
-                    className="rounded-lg p-1.5 hover:bg-slate-800"
-                    onClick={() => onDelete(w.id)}
-                    title="Delete watch"
+              <>
+                {notifications.slice(0, historyLimit).map((n) => {
+                  const Icon = watchIcon(n.source, undefined);
+                  return (
+                    <article
+                      key={n.id}
+                      className="flex items-start gap-3 rounded-card border border-hairline bg-surface p-4 shadow-card"
+                    >
+                      <Icon size={17} className="mt-0.5 shrink-0 text-faint" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[14px] text-ink">{n.body}</p>
+                        <p className="mt-1 font-mono text-[11px] text-faint">
+                          {n.watchLabel} · {timeAgo(n.createdAt)}
+                          {n.status === "failed" ? " · not delivered" : ""}
+                        </p>
+                      </div>
+                    </article>
+                  );
+                })}
+                {notifications.length > historyLimit && (
+                  <Button
+                    variant="ghost"
+                    className="w-full"
+                    onClick={() => setHistoryLimit((n) => n + HISTORY_PAGE)}
                   >
-                    🗑️
-                  </button>
-                </div>
-              ))
-            )
-          ) : notifications.length === 0 ? (
-            <p className="text-sm text-slate-500">
-              No alerts yet. They&apos;ll appear here as your watches fire.
-            </p>
-          ) : (
-            <>
-              {notifications.slice(0, historyLimit).map((n) => (
-                <div key={n.id} className="flex items-start gap-3 rounded-xl bg-slate-900 p-4">
-                  <span className="text-xl leading-none">{iconForSource(n.source, n.title)}</span>
-                  <div className="flex-1">
-                    <p className="text-sm">{n.body}</p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {n.watchLabel} · {timeAgo(n.createdAt)}
-                      {n.status === "failed" ? " · not delivered" : ""}
-                    </p>
-                  </div>
-                </div>
-              ))}
-              {notifications.length > historyLimit && (
-                <button
-                  className="w-full rounded-xl bg-slate-900 py-3 text-sm font-semibold text-slate-400 hover:bg-slate-800"
-                  onClick={() => setHistoryLimit((n) => n + HISTORY_PAGE)}
-                >
-                  View {Math.min(HISTORY_PAGE, notifications.length - historyLimit)} more
-                </button>
+                    View {Math.min(HISTORY_PAGE, notifications.length - historyLimit)} more
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {listView === "settings" && (
+          <div className="flex flex-col gap-3">
+            <section className="rounded-card border border-hairline bg-surface p-5 shadow-card">
+              <h2 className="text-[15px] font-semibold text-ink">Notifications</h2>
+              <p className="mt-1 text-[13.5px] text-muted">
+                {ownerId
+                  ? "This browser is registered for alerts."
+                  : "Not registered yet — turn on notifications to start receiving alerts."}
+              </p>
+              {!ownerId && supported && (
+                <Button className="mt-4" onClick={enableNotifications} disabled={busy}>
+                  {busy ? "Setting up…" : "Enable notifications"}
+                </Button>
               )}
-            </>
-          )}
-        </div>
+            </section>
 
-        <footer className="mt-10 space-y-2 text-xs text-slate-600">
-          <p>
-            Watches are checked every ~15 minutes. Web and mobile keep separate watch lists until
-            accounts arrive.
-          </p>
-          <p>
-            Weather by Open-Meteo · Music data by MusicBrainz · Reverse geocoding by BigDataCloud
-          </p>
-          <p>
-            <a href="/privacy" className="text-slate-500 underline hover:text-slate-300">
-              Privacy
-            </a>
-          </p>
-        </footer>
-      </div>
-    </main>
-  );
-}
+            <section className="rounded-card border border-hairline bg-surface p-5 shadow-card">
+              <h2 className="text-[15px] font-semibold text-ink">About</h2>
+              <p className="mt-1 text-[13.5px] text-muted">
+                Watches are checked every ~15 minutes. Web and mobile keep separate watch lists
+                until accounts arrive.
+              </p>
+              <p className="mt-3 text-[12.5px] text-faint">
+                Weather by Open-Meteo · Music data by MusicBrainz · Reverse geocoding by
+                BigDataCloud
+              </p>
+              <a
+                href="/privacy"
+                className="mt-3 inline-block text-[13px] text-accent underline underline-offset-2"
+              >
+                Privacy
+              </a>
+            </section>
+          </div>
+        )}
+      </main>
 
-function Tab({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      className={`flex-1 rounded-lg py-2.5 text-sm font-bold ${
-        active ? "bg-slate-800 text-white" : "text-slate-500 hover:text-slate-300"
-      }`}
-      onClick={onClick}
-    >
-      {label}
-    </button>
-  );
-}
+      <SlideOver open={builderOpen} title="New watch" onClose={() => setBuilderOpen(false)}>
+        <WatchForm
+          source={source}
+          onSourceChange={setSource}
+          disabled={!ownerId}
+          locationText={locationText}
+          onLocationChange={(next) => {
+            userTypedRef.current = true;
+            setLocationText(next);
+            setLocationEdited(true);
+          }}
+          locationEdited={locationEdited}
+          coords={coords}
+          locating={locating}
+          locationHits={locationHits}
+          searchingLocation={searchingLocation}
+          onUseCurrentLocation={() => useCurrentLocation({ explicit: true })}
+          onPickPlace={(place) => {
+            setCoords({ latitude: place.latitude, longitude: place.longitude });
+            setLocationText(place.label);
+            setLocationEdited(false);
+            setLocationHits([]);
+          }}
+          metric={metric}
+          onMetricChange={setMetric}
+          comparator={comparator}
+          onComparatorChange={setComparator}
+          tempUnit={tempUnit}
+          onTempUnitChange={switchTempUnit}
+          threshold={threshold}
+          onThresholdChange={setThreshold}
+          thresholdProblem={thresholdProblem}
+          artistQuery={artistQuery}
+          onArtistQueryChange={setArtistQuery}
+          artistHits={artistHits}
+          searching={searching}
+          noResults={noResults}
+          artist={artist}
+          onPickArtist={(hit) => {
+            setArtist(hit);
+            setArtistHits([]);
+          }}
+          includeSingles={includeSingles}
+          onIncludeSinglesChange={setIncludeSingles}
+          musicCount={musicCount}
+          musicLimit={MUSIC_LIMIT}
+          musicFull={musicFull}
+          canCreate={canCreate}
+          busy={busy}
+          onCreate={onCreate}
+          onCancel={() => setBuilderOpen(false)}
+        />
+      </SlideOver>
 
-function Chip({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      className={`rounded-full border px-4 py-1.5 text-sm font-semibold ${
-        active
-          ? "border-blue-600 bg-blue-600 text-white"
-          : "border-slate-700 bg-slate-950 text-slate-400 hover:border-slate-500"
-      }`}
-      onClick={onClick}
-    >
-      {label}
-    </button>
+      <MobileTabBar view={listView} onSelect={setListView} />
+    </div>
   );
 }
