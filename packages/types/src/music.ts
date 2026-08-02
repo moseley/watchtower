@@ -19,6 +19,13 @@ export const LatestReleaseSchema = z.object({
   date: z.string(), // YYYY-MM-DD
   title: z.string(),
   type: z.string(),
+  /**
+   * Cover art for this release, from iTunes. MusicBrainz holds no images and
+   * iTunes has no artist photo either, so the sleeve of what they last put out
+   * stands in — matched on artist *and* title, which is far less likely to
+   * pick the wrong act than a bare name lookup.
+   */
+  artworkUrl: z.string().optional(),
 });
 export type LatestRelease = z.infer<typeof LatestReleaseSchema>;
 

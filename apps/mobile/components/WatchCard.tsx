@@ -1,9 +1,9 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import type { WatchRow } from "../lib/api";
 import { Trash2, watchIcon } from "./icons";
 import { IconChip, StatusBadge, ThresholdBar } from "./primitives";
 import { cardShadow, colors, fonts, radius } from "./theme";
-import { describeRule, describeWatch, watchTitle } from "./watch-display";
+import { describeRule, describeWatch, watchImageUrl, watchTitle } from "./watch-display";
 
 /**
  * Leads with the current value against the threshold, per the Atlas spec.
@@ -21,12 +21,17 @@ export function WatchCard({
 }) {
   const { firing, value, delta, fill } = describeWatch(watch, current);
   const Icon = watchIcon(watch.source, watch.config.rule?.metric);
+  const image = watchImageUrl(watch);
 
   return (
     <View style={styles.card}>
       <View style={styles.header}>
         <View style={styles.identity}>
-          <IconChip icon={Icon} active={firing} />
+          {image ? (
+            <Image source={{ uri: image }} style={styles.image} accessibilityIgnoresInvertColors />
+          ) : (
+            <IconChip icon={Icon} active={firing} />
+          )}
           <View style={styles.identityText}>
             <Text style={styles.title} numberOfLines={1}>
               {watchTitle(watch)}
@@ -73,6 +78,12 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
   identity: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1, minWidth: 0 },
   identityText: { flex: 1, minWidth: 0 },
+  image: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.chip,
+    backgroundColor: colors.chipIdle,
+  },
   title: { fontFamily: fonts.semibold, fontSize: 15, color: colors.ink },
   subtitle: { fontFamily: fonts.regular, fontSize: 12.5, color: colors.muted, marginTop: 2 },
   headerRight: { flexDirection: "row", alignItems: "center", gap: 4 },

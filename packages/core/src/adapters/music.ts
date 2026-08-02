@@ -191,7 +191,10 @@ function typeClause(includeSingles: boolean): string {
  */
 export async function getLatestRelease(
   mbid: string,
-  { includeSingles = false }: { includeSingles?: boolean } = {},
+  {
+    includeSingles = false,
+    artistName,
+  }: { includeSingles?: boolean; artistName?: string } = {},
   fetchImpl: typeof fetch = fetch,
 ): Promise<LatestRelease | null> {
   const now = new Date();
@@ -215,10 +218,15 @@ export async function getLatestRelease(
       .at(0);
 
     if (best) {
+      // Cover art is decoration: a failed lookup must not cost us the release.
+      const artwork = artistName
+        ? await enrich(artistName, best.title, fetchImpl)
+        : {};
       return {
         date: best["first-release-date"]!,
         title: best.title,
         type: best["primary-type"] ?? "Release",
+        ...(artwork.artworkUrl ? { artworkUrl: artwork.artworkUrl } : {}),
       };
     }
   }

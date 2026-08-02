@@ -253,6 +253,7 @@ export async function searchPeople(
       id: number;
       name: string;
       known_for_department?: string;
+      profile_path?: string | null;
       known_for?: { title?: string; name?: string }[];
     }[];
   }>(`/search/person?query=${encodeURIComponent(query)}&include_adult=false`, fetchImpl);
@@ -261,6 +262,7 @@ export async function searchPeople(
     tmdbId: p.id,
     name: p.name,
     ...(p.known_for_department ? { knownFor: p.known_for_department } : {}),
+    ...(p.profile_path ? { profilePath: p.profile_path } : {}),
     knownForTitles: (p.known_for ?? [])
       .map((k) => k.title ?? k.name)
       .filter((t): t is string => Boolean(t))

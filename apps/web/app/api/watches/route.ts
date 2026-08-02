@@ -99,7 +99,11 @@ export async function POST(request: Request) {
   let storedConfig: unknown = config;
   if (source === "music") {
     try {
-      const release = await lookupLatestRelease(config.artist.mbid, config.includeSingles);
+      const release = await lookupLatestRelease(
+        config.artist.mbid,
+        config.includeSingles,
+        config.artist.name,
+      );
       if (release) storedConfig = { ...config, lastRelease: release };
     } catch {
       // leave it off; the card falls back to the watch's own start date

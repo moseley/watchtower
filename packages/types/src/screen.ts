@@ -6,6 +6,8 @@ export const PersonRefSchema = z.object({
   name: z.string().min(1),
   /** TMDB's primary department, e.g. "Acting" or "Directing". */
   knownFor: z.string().optional(),
+  /** TMDB profile image path, e.g. "/abc.jpg". Build a URL with tmdbImageUrl(). */
+  profilePath: z.string().optional(),
 });
 export type PersonRef = z.infer<typeof PersonRefSchema>;
 
@@ -38,10 +40,16 @@ export const ScreenWatchConfigSchema = z.object({
 export type ScreenWatchConfig = z.infer<typeof ScreenWatchConfigSchema>;
 
 /** A search hit returned by /api/screen/search. */
+/** TMDB serves images from its own CDN; w185 is ample for an avatar. */
+export function tmdbImageUrl(profilePath: string, size = "w185"): string {
+  return `https://image.tmdb.org/t/p/${size}${profilePath}`;
+}
+
 export const PersonSearchResultSchema = z.object({
   tmdbId: z.number().int(),
   name: z.string(),
   knownFor: z.string().optional(),
+  profilePath: z.string().optional(),
   /** A few titles they're known for, to tell namesakes apart. */
   knownForTitles: z.array(z.string()).default([]),
 });

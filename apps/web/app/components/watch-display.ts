@@ -1,3 +1,4 @@
+import { tmdbImageUrl } from "@watchtower/types";
 import type { WatchRow } from "./types";
 
 const DAY_MS = 86_400_000;
@@ -30,6 +31,22 @@ export function describeRule(w: WatchRow): string {
         ? "%"
         : ` ${rule.unit ?? "mph"}`;
   return `${rule.metric?.replace(/_/g, " ")} ${rule.comparator} ${rule.threshold}${suffix}`;
+}
+
+/**
+ * A picture for the card, where one exists.
+ *
+ * Neither MusicBrainz nor iTunes offers an artist photo, so a music watch
+ * shows the sleeve of the artist's last release instead — which also says more
+ * than a press shot would. Weather has nothing to show and keeps its icon.
+ */
+export function watchImageUrl(w: WatchRow): string | null {
+  if (w.source === "music") return w.config.lastRelease?.artworkUrl ?? null;
+  if (w.source === "screen") {
+    const path = w.config.person?.profilePath;
+    return path ? tmdbImageUrl(path) : null;
+  }
+  return null;
 }
 
 export function watchTitle(w: WatchRow): string {

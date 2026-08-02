@@ -62,9 +62,9 @@ export interface WatchRow {
     rule?: { metric?: string; comparator?: string; threshold?: number; unit?: string };
     artist?: { name?: string; mbid?: string };
     includeSingles?: boolean;
-    person?: { name?: string; tmdbId?: number; knownFor?: string };
+    person?: { name?: string; tmdbId?: number; knownFor?: string; profilePath?: string };
     includeMinorCredits?: boolean;
-    lastRelease?: { date: string; title: string; type: string };
+    lastRelease?: { date: string; title: string; type: string; artworkUrl?: string };
   };
   // Already returned by /api/watches — the list route selects no subset, so
   // every scalar column comes back. Typing them here surfaces what is there.
@@ -122,6 +122,7 @@ export interface PersonHit {
   tmdbId: number;
   name: string;
   knownFor?: string;
+  profilePath?: string;
   knownForTitles: string[];
 }
 

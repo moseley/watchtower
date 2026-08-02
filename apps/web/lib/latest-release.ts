@@ -35,11 +35,16 @@ function writeCache(key: string, release: LatestRelease | null) {
 export async function lookupLatestRelease(
   mbid: string,
   includeSingles: boolean,
+  artistName?: string,
 ): Promise<LatestRelease | null> {
   const key = `${mbid}:${includeSingles}`;
   const cached = readCache(key);
-  if (cached !== undefined) return cached;
-  const release = await getLatestRelease(mbid, { includeSingles });
+  // Only reuse a cached entry that already carries artwork when artwork was
+  // asked for, so the form's early lookup can't deprive the stored watch of it.
+  if (cached !== undefined && (!artistName || cached === null || cached.artworkUrl)) {
+    return cached;
+  }
+  const release = await getLatestRelease(mbid, { includeSingles, artistName });
   writeCache(key, release);
   return release;
 }

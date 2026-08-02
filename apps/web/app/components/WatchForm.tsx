@@ -2,6 +2,7 @@
 
 import { AudioLines, Clapperboard, CloudSun, Crosshair, Info, Search } from "./icons";
 import { Button, FieldLabel, SegmentedControl, TextField } from "./primitives";
+import { tmdbImageUrl } from "@watchtower/types";
 import type { ArtistHit, PersonHit, Place } from "./types";
 
 type Source = "weather" | "music" | "screen";
@@ -369,14 +370,32 @@ export function WatchForm(props: WatchFormProps) {
                           <button
                             type="button"
                             onClick={() => onPickPerson(hit)}
-                            className="w-full rounded-[8px] px-3 py-2 text-left transition-colors hover:bg-sidebar"
+                            className="flex w-full items-center gap-2.5 rounded-[8px] px-3 py-2 text-left transition-colors hover:bg-sidebar"
                           >
-                            <span className="block text-[13.5px] font-medium text-ink">
-                              {hit.name}
-                            </span>
-                            <span className="block truncate text-[12px] text-faint">
-                              {[hit.knownFor, ...hit.knownForTitles].filter(Boolean).join(" · ") ||
-                                "person"}
+                            {hit.profilePath ? (
+                              // Decorative — the name sits right beside it.
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={tmdbImageUrl(hit.profilePath, "w92")}
+                                alt=""
+                                width={28}
+                                height={28}
+                                loading="lazy"
+                                className="h-7 w-7 shrink-0 rounded-full object-cover"
+                              />
+                            ) : (
+                              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-chip-idle text-faint">
+                                <Clapperboard size={14} />
+                              </span>
+                            )}
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-[13.5px] font-medium text-ink">
+                                {hit.name}
+                              </span>
+                              <span className="block truncate text-[12px] text-faint">
+                                {[hit.knownFor, ...hit.knownForTitles].filter(Boolean).join(" · ") ||
+                                  "person"}
+                              </span>
                             </span>
                           </button>
                         </li>
