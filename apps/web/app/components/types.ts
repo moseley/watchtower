@@ -4,7 +4,13 @@ export interface WatchRow {
   source: string;
   config: {
     location?: { label?: string };
-    rule?: { metric?: string; comparator?: string; threshold?: number; unit?: string };
+    rule?: {
+      metric?: string;
+      comparator?: string;
+      threshold?: number;
+      unit?: string;
+      withinHours?: number;
+    };
     artist?: { name?: string; mbid?: string };
     includeSingles?: boolean;
     person?: { name?: string; tmdbId?: number; knownFor?: string; profilePath?: string };

@@ -43,11 +43,15 @@ export const weatherAdapter: SourceAdapter<WeatherWatchConfig> = {
 };
 
 function buildUrl(location: Location, rule: WeatherRule): string {
+  // Ask for enough days to cover the notice window. The +1 absorbs the offset
+  // between "now" and midnight — a 24-hour window starting at 6pm still needs
+  // to reach into the day after tomorrow. Open-Meteo serves 16 days.
+  const days = Math.min(16, Math.ceil(rule.withinHours / 24) + 1);
   const params = new URLSearchParams({
     latitude: String(location.latitude),
     longitude: String(location.longitude),
     timezone: "auto",
-    forecast_days: "3",
+    forecast_days: String(days),
   });
   const hourly: string[] = [];
   if (rule.metric === "temperature") {
@@ -100,11 +104,13 @@ function evaluateRule(
     if (Number.isNaN(utcMs) || utcMs < nowMs || utcMs > horizonMs) continue;
 
     if (meets(rule, value)) {
-      return [buildMatch(rule, value, localIso, location)];
+      return [buildMatch(rule, value, localIso, location, now, offsetSeconds)];
     }
   }
   return [];
 }
+
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 function formatHour(localIso: string): string {
   const hour = Number(localIso.slice(11, 13));
@@ -113,15 +119,42 @@ function formatHour(localIso: string): string {
   return `${h12} ${period}`;
 }
 
+/**
+ * When the match is, in words. With notice now stretching to a week, "around
+ * 11 AM" on its own would be genuinely ambiguous, so anything beyond today
+ * carries its day.
+ */
+function formatWhen(localIso: string, now: Date, offsetSeconds: number): string {
+  const time = formatHour(localIso);
+
+  // Compare calendar days in the location's own timezone, not the server's.
+  const localNow = new Date(now.getTime() + offsetSeconds * 1000);
+  const todayStr = localNow.toISOString().slice(0, 10);
+  const matchStr = localIso.slice(0, 10);
+  if (matchStr === todayStr) return `around ${time}`;
+
+  const dayDiff = Math.round(
+    (Date.parse(`${matchStr}T12:00:00Z`) - Date.parse(`${todayStr}T12:00:00Z`)) / 86_400_000,
+  );
+  if (dayDiff === 1) return `tomorrow around ${time}`;
+  if (dayDiff > 1 && dayDiff < 7) {
+    const weekday = WEEKDAYS[new Date(`${matchStr}T12:00:00Z`).getUTCDay()];
+    return `${weekday} around ${time}`;
+  }
+  return `on ${matchStr} around ${time}`;
+}
+
 function buildMatch(
   rule: WeatherRule,
   value: number,
   localIso: string,
   location: Location,
+  now: Date,
+  offsetSeconds: number,
 ): WatcherMatch {
   const label = location.label ?? "your location";
   const dateStr = localIso.slice(0, 10);
-  const when = formatHour(localIso);
+  const when = formatWhen(localIso, now, offsetSeconds);
   const rounded = Math.round(value);
 
   if (rule.metric === "temperature") {
@@ -130,7 +163,7 @@ function buildMatch(
     return {
       dedupeKey: `temperature:${rule.comparator}:${rule.threshold}:${dateStr}`,
       title: `${emoji} Temperature alert — ${label}`,
-      body: `${rounded}°${rule.unit} forecast around ${when}, ${dir} your ${rule.threshold}°${rule.unit} threshold.`,
+      body: `${rounded}°${rule.unit} forecast ${when}, ${dir} your ${rule.threshold}°${rule.unit} threshold.`,
       data: { metric: "temperature", value, unit: rule.unit, when: localIso, location },
     };
   }
@@ -139,7 +172,7 @@ function buildMatch(
     return {
       dedupeKey: `precip:above:${rule.threshold}:${dateStr}`,
       title: `🌧️ Rain likely — ${label}`,
-      body: `${rounded}% chance of precipitation around ${when}, above your ${rule.threshold}% threshold.`,
+      body: `${rounded}% chance of precipitation ${when}, above your ${rule.threshold}% threshold.`,
       data: { metric: "precipitation_probability", value, when: localIso, location },
     };
   }
@@ -147,7 +180,7 @@ function buildMatch(
   return {
     dedupeKey: `wind:above:${rule.threshold}:${dateStr}`,
     title: `💨 Wind alert — ${label}`,
-    body: `Winds near ${rounded} ${rule.unit} around ${when}, above your ${rule.threshold} ${rule.unit} threshold.`,
+    body: `Winds near ${rounded} ${rule.unit} ${when}, above your ${rule.threshold} ${rule.unit} threshold.`,
     data: { metric: "wind_speed", value, unit: rule.unit, when: localIso, location },
   };
 }

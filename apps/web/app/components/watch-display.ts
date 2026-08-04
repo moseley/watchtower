@@ -1,4 +1,4 @@
-import { tmdbImageUrl } from "@watchtower/types";
+import { noticeLabel, tmdbImageUrl } from "@watchtower/types";
 import type { WatchRow } from "./types";
 
 const DAY_MS = 86_400_000;
@@ -30,7 +30,9 @@ export function describeRule(w: WatchRow): string {
       : rule.metric === "precipitation_probability"
         ? "%"
         : ` ${rule.unit ?? "mph"}`;
-  return `${rule.metric?.replace(/_/g, " ")} ${rule.comparator} ${rule.threshold}${suffix}`;
+  // The notice setting is otherwise invisible once a watch exists.
+  const notice = rule.withinHours ? ` · ${noticeLabel(rule.withinHours)} notice` : "";
+  return `${rule.metric?.replace(/_/g, " ")} ${rule.comparator} ${rule.threshold}${suffix}${notice}`;
 }
 
 /**

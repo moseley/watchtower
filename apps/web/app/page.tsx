@@ -8,7 +8,7 @@ import { WatchCard } from "./components/WatchCard";
 import { WatchForm } from "./components/WatchForm";
 import { AudioLines, Bell, Clapperboard, CloudSun, Layers, Plus, watchIcon } from "./components/icons";
 import { Button } from "./components/primitives";
-import type { LatestRelease } from "@watchtower/types";
+import { noticeOptionsFor, type LatestRelease } from "@watchtower/types";
 import type {
   ArtistHit,
   ListView,
@@ -33,6 +33,16 @@ const HISTORY_PAGE = 10;
 
 /** Roughly the same temperature in each scale, so the default reads sensibly. */
 const DEFAULT_THRESHOLD: Record<TempUnit, string> = { F: "85", C: "29" };
+
+/**
+ * Default notice per metric. Heat is something you react to within hours;
+ * rain is something you plan a day around.
+ */
+const DEFAULT_NOTICE: Record<Metric, number> = {
+  temperature: 4,
+  precipitation_probability: 24,
+  wind_speed: 12,
+};
 
 const fahrenheitToCelsius = (f: number) => Math.round(((f - 32) * 5) / 9);
 const celsiusToFahrenheit = (c: number) => Math.round((c * 9) / 5 + 32);
@@ -98,6 +108,7 @@ export default function Home() {
   const [comparator, setComparator] = useState<Comparator>("below");
   const [tempUnit, setTempUnit] = useState<TempUnit>("F");
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD.F);
+  const [noticeHours, setNoticeHours] = useState(DEFAULT_NOTICE.temperature);
   const lastConversionRef = useRef<{
     from: TempUnit;
     to: TempUnit;
@@ -432,10 +443,16 @@ export default function Home() {
     const value = Number(threshold);
     const rule =
       metric === "temperature"
-        ? { metric, comparator, threshold: value, unit: tempUnit, withinHours: 12 }
+        ? { metric, comparator, threshold: value, unit: tempUnit, withinHours: noticeHours }
         : metric === "precipitation_probability"
-          ? { metric, comparator: "above", threshold: value, withinHours: 6 }
-          : { metric, comparator: "above", threshold: value, unit: "mph", withinHours: 12 };
+          ? { metric, comparator: "above", threshold: value, withinHours: noticeHours }
+          : {
+              metric,
+              comparator: "above",
+              threshold: value,
+              unit: "mph",
+              withinHours: noticeHours,
+            };
 
     await api("/api/watches", {
       method: "POST",
@@ -815,7 +832,16 @@ export default function Home() {
             setLocationHits([]);
           }}
           metric={metric}
-          onMetricChange={setMetric}
+          onMetricChange={(next) => {
+            setMetric(next);
+            // Rain offers day-scale notice and the others hour-scale, so a
+            // value carried across metrics can fall outside the new choices.
+            if (!noticeOptionsFor(next).some((o) => o.hours === noticeHours)) {
+              setNoticeHours(DEFAULT_NOTICE[next]);
+            }
+          }}
+          noticeHours={noticeHours}
+          onNoticeHoursChange={setNoticeHours}
           comparator={comparator}
           onComparatorChange={setComparator}
           tempUnit={tempUnit}

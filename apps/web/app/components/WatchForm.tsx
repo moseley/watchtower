@@ -2,7 +2,7 @@
 
 import { AudioLines, Clapperboard, CloudSun, Crosshair, Info, Search } from "./icons";
 import { Button, FieldLabel, SegmentedControl, TextField } from "./primitives";
-import { tmdbImageUrl } from "@watchtower/types";
+import { noticeLabel, noticeOptionsFor, tmdbImageUrl } from "@watchtower/types";
 import type { ArtistHit, PersonHit, Place } from "./types";
 
 type Source = "weather" | "music" | "screen";
@@ -46,6 +46,8 @@ export interface WatchFormProps {
   threshold: string;
   onThresholdChange: (next: string) => void;
   thresholdProblem: string | null;
+  noticeHours: number;
+  onNoticeHoursChange: (next: number) => void;
 
   // music
   artistQuery: string;
@@ -104,13 +106,14 @@ function rulePreview(p: WatchFormProps): string | null {
   }
   const place = p.locationText.trim();
   if (!place || p.thresholdProblem) return null;
+  const ahead = `up to ${noticeLabel(p.noticeHours)} ahead`;
   if (p.metric === "temperature") {
-    return `You'll be alerted when the temperature in ${place} goes ${p.comparator} ${p.threshold}°${p.tempUnit}.`;
+    return `You'll be alerted ${ahead} when the temperature in ${place} goes ${p.comparator} ${p.threshold}°${p.tempUnit}.`;
   }
   if (p.metric === "precipitation_probability") {
-    return `You'll be alerted when the chance of rain in ${place} goes above ${p.threshold}%.`;
+    return `You'll be alerted ${ahead} when the chance of rain in ${place} goes above ${p.threshold}%.`;
   }
-  return `You'll be alerted when wind in ${place} goes above ${p.threshold} mph.`;
+  return `You'll be alerted ${ahead} when wind in ${place} goes above ${p.threshold} mph.`;
 }
 
 export function WatchForm(props: WatchFormProps) {
@@ -136,6 +139,8 @@ export function WatchForm(props: WatchFormProps) {
     threshold,
     onThresholdChange,
     thresholdProblem,
+    noticeHours,
+    onNoticeHoursChange,
     artistQuery,
     onArtistQueryChange,
     artistHits,
@@ -321,6 +326,34 @@ export function WatchForm(props: WatchFormProps) {
               {thresholdProblem && (
                 <p className="text-[12px] text-red-600">{thresholdProblem}</p>
               )}
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel>How much notice</FieldLabel>
+              <div className="flex flex-wrap gap-2">
+                {noticeOptionsFor(metric).map((option) => {
+                  const selected = noticeHours === option.hours;
+                  return (
+                    <button
+                      key={option.hours}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => onNoticeHoursChange(option.hours)}
+                      className={`rounded-control px-3.5 py-2 text-[13.5px] transition-colors disabled:opacity-50 ${
+                        selected
+                          ? "border-[1.5px] border-accent bg-accent-tint font-semibold text-accent"
+                          : "border border-hairline bg-surface text-ink hover:border-hairline-strong"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[12px] text-faint">
+                How far ahead to look. A shorter setting never misses anything — it just tells
+                you closer to the time.
+              </p>
             </div>
           </>
         ) : source === "screen" ? (

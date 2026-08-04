@@ -8,7 +8,7 @@ import {
   SpaceGrotesk_600SemiBold,
   SpaceGrotesk_700Bold,
 } from "@expo-google-fonts/space-grotesk";
-import { WeatherWatchConfigSchema } from "@watchtower/types";
+import { WeatherWatchConfigSchema, noticeLabel, noticeOptionsFor } from "@watchtower/types";
 import { useFonts } from "expo-font";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
@@ -88,6 +88,16 @@ const OWNER_KEY = "watchtower.ownerId";
 /** Roughly the same temperature in each scale, so the default reads sensibly. */
 const DEFAULT_THRESHOLD: Record<TempUnit, string> = { F: "85", C: "29" };
 
+/**
+ * Default notice per metric. Heat is something you react to within hours;
+ * rain is something you plan a day around.
+ */
+const DEFAULT_NOTICE: Record<Metric, number> = {
+  temperature: 4,
+  precipitation_probability: 24,
+  wind_speed: 12,
+};
+
 const fahrenheitToCelsius = (f: number) => Math.round(((f - 32) * 5) / 9);
 const celsiusToFahrenheit = (c: number) => Math.round((c * 9) / 5 + 32);
 
@@ -150,6 +160,7 @@ export default function App() {
   const [comparator, setComparator] = useState<Comparator>("below");
   const [tempUnit, setTempUnit] = useState<TempUnit>("F");
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD.F);
+  const [noticeHours, setNoticeHours] = useState(DEFAULT_NOTICE.temperature);
   const lastConversionRef = useRef<{
     from: TempUnit;
     to: TempUnit;
@@ -501,15 +512,15 @@ export default function App() {
     const value = Number(threshold);
     const rule =
       metric === "temperature"
-        ? { metric, comparator, threshold: value, unit: tempUnit, withinHours: 12 }
+        ? { metric, comparator, threshold: value, unit: tempUnit, withinHours: noticeHours }
         : metric === "precipitation_probability"
-          ? { metric, comparator: "above" as const, threshold: value, withinHours: 6 }
+          ? { metric, comparator: "above" as const, threshold: value, withinHours: noticeHours }
           : {
               metric,
               comparator: "above" as const,
               threshold: value,
               unit: "mph" as const,
-              withinHours: 12,
+              withinHours: noticeHours,
             };
 
     const config = WeatherWatchConfigSchema.parse({
@@ -634,13 +645,14 @@ export default function App() {
     }
     const place = locationText.trim();
     if (!place || thresholdProblem) return null;
+    const ahead = `up to ${noticeLabel(noticeHours)} ahead`;
     if (metric === "temperature") {
-      return `You'll be alerted when the temperature in ${place} goes ${comparator} ${threshold}°${tempUnit}.`;
+      return `You'll be alerted ${ahead} when the temperature in ${place} goes ${comparator} ${threshold}°${tempUnit}.`;
     }
     if (metric === "precipitation_probability") {
-      return `You'll be alerted when the chance of rain in ${place} goes above ${threshold}%.`;
+      return `You'll be alerted ${ahead} when the chance of rain in ${place} goes above ${threshold}%.`;
     }
-    return `You'll be alerted when wind in ${place} goes above ${threshold} mph.`;
+    return `You'll be alerted ${ahead} when wind in ${place} goes above ${threshold} mph.`;
   }
 
   const preview = rulePreview();
@@ -943,7 +955,14 @@ export default function App() {
                   <SegmentedControl
                     options={METRIC_OPTIONS}
                     value={metric}
-                    onChange={setMetric}
+                    onChange={(next) => {
+                      setMetric(next);
+                      // Rain offers day-scale notice and the others hour-scale,
+                      // so a carried-over value can fall outside the new set.
+                      if (!noticeOptionsFor(next).some((o) => o.hours === noticeHours)) {
+                        setNoticeHours(DEFAULT_NOTICE[next]);
+                      }
+                    }}
                   />
                 </View>
 
@@ -997,6 +1016,32 @@ export default function App() {
                     )}
                   </View>
                   {thresholdProblem && <Text style={styles.error}>{thresholdProblem}</Text>}
+                </View>
+
+                <View style={styles.field}>
+                  <FieldLabel>How much notice</FieldLabel>
+                  <View style={styles.chipWrap}>
+                    {noticeOptionsFor(metric).map((option) => {
+                      const selected = noticeHours === option.hours;
+                      return (
+                        <Pressable
+                          key={option.hours}
+                          onPress={() => setNoticeHours(option.hours)}
+                          style={[styles.choice, styles.noticeChip, selected && styles.choiceSelected]}
+                        >
+                          <Text
+                            style={[styles.choiceText, selected && styles.choiceTextSelected]}
+                          >
+                            {option.label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  <Text style={styles.hint}>
+                    How far ahead to look. A shorter setting never misses anything — it just
+                    tells you closer to the time.
+                  </Text>
                 </View>
               </>
             ) : source === "screen" ? (
@@ -1393,6 +1438,8 @@ const styles = StyleSheet.create({
   choiceTextSelected: { fontFamily: fonts.semibold, color: colors.accent },
 
   unitToggle: { width: 104 },
+  chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  noticeChip: { flex: 0, paddingHorizontal: 14 },
 
   selectedArtist: {
     flexDirection: "row",
