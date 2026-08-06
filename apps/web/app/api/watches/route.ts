@@ -1,7 +1,6 @@
 import { type Prisma, prisma } from "@watchtower/db";
 import { CreateWatchInputSchema, WATCH_LIMITS } from "@watchtower/types";
-import { getPersonSnapshot } from "@watchtower/core";
-import { lookupLatestRelease } from "../../../lib/latest-release";
+import { ConfigLookupError, buildStoredConfig } from "../../../lib/watch-config";
 
 export const dynamic = "force-dynamic";
 
@@ -92,42 +91,19 @@ export async function POST(request: Request) {
     }
   }
 
-  // Record where the artist's catalogue stands right now, so the card can show
-  // time since their last release instead of since the watch began. Looked up
-  // server-side so it is present however the watch was created, and best-effort
-  // because a MusicBrainz hiccup must not stop someone making a watch.
-  let storedConfig: unknown = config;
-  if (source === "music") {
-    try {
-      const release = await lookupLatestRelease(
-        config.artist.mbid,
-        config.includeSingles,
-        config.artist.name,
-      );
-      if (release) storedConfig = { ...config, lastRelease: release };
-    } catch {
-      // leave it off; the card falls back to the watch's own start date
+  // Fill in the server-side snapshots this source needs: where the artist's
+  // catalogue stands, or the person's existing filmography so their back
+  // catalogue is never announced as new. Shared with the edit path.
+  let storedConfig: unknown;
+  try {
+    storedConfig = await buildStoredConfig(parsed.data);
+  } catch (err) {
+    if (err instanceof ConfigLookupError) {
+      // Without a baseline the first poll would announce a whole career, so
+      // this one genuinely has to block.
+      return Response.json({ error: err.message }, { status: 502 });
     }
-  }
-
-  // Record the person's existing filmography, so their back catalogue is never
-  // announced as new. Unlike music there is no date to compare against — an
-  // announced project often has no release date at all — so this snapshot is
-  // the only thing separating "new" from "already there".
-  if (source === "screen") {
-    try {
-      const snapshot = await getPersonSnapshot(config.person.tmdbId, {
-        includeMinorCredits: config.includeMinorCredits,
-      });
-      storedConfig = { ...config, ...snapshot };
-    } catch (err) {
-      // Without a baseline the first poll would announce their whole career,
-      // so this one genuinely has to block.
-      return Response.json(
-        { error: `Couldn't read that person's filmography: ${(err as Error).message}` },
-        { status: 502 },
-      );
-    }
+    throw err;
   }
 
   const watch = await prisma.watch.create({

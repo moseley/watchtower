@@ -14,18 +14,29 @@ export function WatchCard({
   watch,
   current,
   onDelete,
+  onEdit,
 }: {
   watch: WatchRow;
   current?: number;
   onDelete: (id: string) => void;
+  onEdit: (watch: WatchRow) => void;
 }) {
   const { firing, value, delta, fill } = describeWatch(watch, current);
   const Icon = watchIcon(watch.source, watch.config.rule?.metric);
   const image = watchImageUrl(watch);
 
   return (
-    <article className="flex flex-col gap-3.5 rounded-card border border-hairline bg-surface p-[18px] shadow-card transition-colors hover:border-hairline-strong">
-      <header className="flex items-start justify-between gap-3">
+    <article className="relative flex flex-col gap-3.5 rounded-card border border-hairline bg-surface p-[18px] shadow-card transition-colors hover:border-hairline-strong focus-within:border-accent">
+      {/* The whole card opens the editor. A stretched transparent button keeps
+          that a real, keyboard-reachable control without nesting the delete
+          button inside it, which would be invalid and swallow its clicks. */}
+      <button
+        type="button"
+        onClick={() => onEdit(watch)}
+        aria-label={`Edit watch for ${watchTitle(watch)}`}
+        className="absolute inset-0 z-0 rounded-card outline-none"
+      />
+      <header className="pointer-events-none relative z-10 flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
           {image ? (
             // Decorative: the title beside it already names the watch.
@@ -48,7 +59,7 @@ export function WatchCard({
             <span className="truncate text-[12.5px] text-muted">{describeRule(watch)}</span>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="pointer-events-auto flex shrink-0 items-center gap-1.5">
           <StatusBadge firing={firing} />
           <button
             type="button"
@@ -62,7 +73,7 @@ export function WatchCard({
         </div>
       </header>
 
-      <div className="flex items-end justify-between gap-3">
+      <div className="pointer-events-none relative z-10 flex items-end justify-between gap-3">
         {/* 36px on mobile, 40px from md up, per the type scale. */}
         <span className="text-[36px] font-bold leading-none tracking-[-.04em] tabular-nums text-ink md:text-[40px]">
           {value ?? <span className="text-neutral-bar">—</span>}
@@ -70,7 +81,9 @@ export function WatchCard({
         <span className="pb-1 text-right text-[12.5px] text-muted">{delta}</span>
       </div>
 
-      <ThresholdBar fill={fill} firing={firing} />
+      <div className="pointer-events-none relative z-10">
+        <ThresholdBar fill={fill} firing={firing} />
+      </div>
     </article>
   );
 }

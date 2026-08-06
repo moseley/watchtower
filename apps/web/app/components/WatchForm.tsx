@@ -82,6 +82,8 @@ export interface WatchFormProps {
   busy: boolean;
   onCreate: () => void;
   onCancel: () => void;
+  /** Editing an existing watch rather than building a new one. */
+  editing: boolean;
 }
 
 function daysSince(date: string): number {
@@ -170,6 +172,7 @@ export function WatchForm(props: WatchFormProps) {
     busy,
     onCreate,
     onCancel,
+    editing,
   } = props;
 
   const preview = rulePreview(props);
@@ -185,7 +188,10 @@ export function WatchForm(props: WatchFormProps) {
               <button
                 key={value}
                 type="button"
-                disabled={disabled}
+                // Changing source turns it into a different watch, and its
+                // history would no longer describe it — the API rejects it too.
+                disabled={disabled || editing}
+                title={editing ? "A watch's source can't be changed" : undefined}
                 onClick={() => onSourceChange(value)}
                 className={`flex items-center gap-2.5 rounded-control px-3.5 py-3 text-[14px] transition-colors disabled:opacity-50 ${
                   selected
@@ -585,7 +591,7 @@ export function WatchForm(props: WatchFormProps) {
           Cancel
         </Button>
         <Button className="flex-1" onClick={onCreate} disabled={!canCreate} type="button">
-          {busy ? "Working…" : "Create watch"}
+          {busy ? "Working…" : editing ? "Save changes" : "Create watch"}
         </Button>
       </div>
     </div>

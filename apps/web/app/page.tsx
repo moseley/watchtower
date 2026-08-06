@@ -93,6 +93,8 @@ export default function Home() {
   // panel is open. Neither touches what is fetched or how a watch is made.
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [builderOpen, setBuilderOpen] = useState(false);
+  /** Id of the watch being edited; null while building a new one. */
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   // weather form
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -425,7 +427,7 @@ export default function Home() {
     return null;
   }
 
-  async function createWeatherWatch() {
+  async function buildWeatherPayload() {
     let loc: { latitude: number; longitude: number; label: string };
     if (locationEdited || !coords) {
       const query = locationText.trim();
@@ -454,79 +456,90 @@ export default function Home() {
               withinHours: noticeHours,
             };
 
-    await api("/api/watches", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ownerId,
-        source: "weather",
-        label: `${loc.label} · ${METRIC_NAMES[metric]}`,
-        config: {
-          location: { latitude: loc.latitude, longitude: loc.longitude, label: loc.label },
-          rule,
-        },
-      }),
-    });
+    return {
+      source: "weather",
+      label: `${loc.label} · ${METRIC_NAMES[metric]}`,
+      config: {
+        location: { latitude: loc.latitude, longitude: loc.longitude, label: loc.label },
+        rule,
+      },
+    };
   }
 
-  async function createMusicWatch() {
+  function buildMusicPayload() {
     if (!artist) throw new Error("Pick an artist first");
-    await api("/api/watches", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ownerId,
-        source: "music",
-        label: artist.name,
-        config: {
-          artist: {
-            mbid: artist.mbid,
-            name: artist.name,
-            ...(artist.disambiguation ? { disambiguation: artist.disambiguation } : {}),
-          },
-          includeSingles,
+    return {
+      source: "music",
+      label: artist.name,
+      config: {
+        artist: {
+          mbid: artist.mbid,
+          name: artist.name,
+          ...(artist.disambiguation ? { disambiguation: artist.disambiguation } : {}),
         },
-      }),
-    });
-    setArtist(null);
-    setArtistHits([]);
-    setArtistQuery("");
+        includeSingles,
+      },
+    };
   }
 
-  async function createScreenWatch() {
+  function buildScreenPayload() {
     if (!person) throw new Error("Pick someone first");
-    await api("/api/watches", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ownerId,
-        source: "screen",
-        label: person.name,
-        config: {
-          person: {
-            tmdbId: person.tmdbId,
-            name: person.name,
-            ...(person.knownFor ? { knownFor: person.knownFor } : {}),
-          },
-          includeMinorCredits,
+    return {
+      source: "screen",
+      label: person.name,
+      config: {
+        person: {
+          tmdbId: person.tmdbId,
+          name: person.name,
+          ...(person.knownFor ? { knownFor: person.knownFor } : {}),
+          ...(person.profilePath ? { profilePath: person.profilePath } : {}),
         },
-      }),
-    });
-    setPerson(null);
-    setPersonHits([]);
-    setPersonQuery("");
+        includeMinorCredits,
+      },
+    };
   }
 
-  async function onCreate() {
+  /** Creates or updates, depending on whether the form was opened on a watch. */
+  async function onSave() {
     if (!ownerId) return;
     setBusy(true);
     try {
-      if (source === "weather") await createWeatherWatch();
-      else if (source === "screen") await createScreenWatch();
-      else await createMusicWatch();
-      setStatus("Watch created");
+      const payload =
+        source === "weather"
+          ? await buildWeatherPayload()
+          : source === "screen"
+            ? buildScreenPayload()
+            : buildMusicPayload();
+
+      if (editingId) {
+        await api(
+          `/api/watches/${encodeURIComponent(editingId)}?ownerId=${encodeURIComponent(ownerId)}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          },
+        );
+        setStatus("Watch updated");
+      } else {
+        await api("/api/watches", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ownerId, ...payload }),
+        });
+        setStatus("Watch created");
+        // Only clear the pickers after a create; an edit keeps its subject.
+        setArtist(null);
+        setArtistHits([]);
+        setArtistQuery("");
+        setPerson(null);
+        setPersonHits([]);
+        setPersonQuery("");
+      }
+
       await refreshWatches(ownerId);
       setBuilderOpen(false);
+      setEditingId(null);
     } catch (err) {
       setStatus(`${(err as Error).message}`);
     } finally {
@@ -551,14 +564,15 @@ export default function Home() {
   const screenFull = screenCount >= MUSIC_LIMIT;
   // Deliberately not gated on `locating`: a typed city needs no GPS, so a slow
   // or failed fix must never block creating a watch.
+  // The per-source limits only apply to adding another, not to saving an edit.
   const canCreate =
     Boolean(ownerId) &&
     !busy &&
     (source === "weather"
       ? !thresholdProblem && locationText.trim() !== ""
       : source === "screen"
-        ? Boolean(person) && !screenFull
-        : Boolean(artist) && !musicFull);
+        ? Boolean(person) && (Boolean(editingId) || !screenFull)
+        : Boolean(artist) && (Boolean(editingId) || !musicFull));
 
   const counts = {
     all: watches.length,
@@ -586,6 +600,69 @@ export default function Home() {
 
   function openBuilder() {
     setStatus("");
+    setEditingId(null);
+    setBuilderOpen(true);
+  }
+
+  function closeBuilder() {
+    setBuilderOpen(false);
+    setEditingId(null);
+  }
+
+  /** Load an existing watch back into the form so it can be changed. */
+  function openEditor(w: WatchRow) {
+    setStatus("");
+    setEditingId(w.id);
+    setSource(w.source as Source);
+
+    if (w.source === "weather") {
+      const rule = w.config.rule ?? {};
+      const loc = w.config.location as
+        | { latitude?: number; longitude?: number; label?: string }
+        | undefined;
+      if (loc?.latitude !== undefined && loc?.longitude !== undefined) {
+        setCoords({ latitude: loc.latitude, longitude: loc.longitude });
+      }
+      setLocationText(loc?.label ?? "");
+      // Already resolved, so don't re-geocode unless the text is changed.
+      setLocationEdited(false);
+      setLocationHits([]);
+      userTypedRef.current = false;
+      const nextMetric = (rule.metric as Metric) ?? "temperature";
+      setMetric(nextMetric);
+      setComparator((rule.comparator as Comparator) ?? "below");
+      setTempUnit((rule.unit as TempUnit) ?? "F");
+      setThreshold(rule.threshold !== undefined ? String(rule.threshold) : DEFAULT_THRESHOLD.F);
+      setNoticeHours(rule.withinHours ?? DEFAULT_NOTICE[nextMetric]);
+      lastConversionRef.current = null;
+    } else if (w.source === "music") {
+      const a = w.config.artist;
+      setArtist(
+        a?.mbid && a?.name
+          ? { mbid: a.mbid, name: a.name, ...(a.disambiguation ? { disambiguation: a.disambiguation } : {}) }
+          : null,
+      );
+      setArtistQuery("");
+      setArtistHits([]);
+      setIncludeSingles(Boolean(w.config.includeSingles));
+    } else {
+      const p = w.config.person;
+      setPerson(
+        p?.tmdbId !== undefined && p?.name
+          ? {
+              tmdbId: p.tmdbId,
+              name: p.name,
+              ...(p.knownFor ? { knownFor: p.knownFor } : {}),
+              ...(p.profilePath ? { profilePath: p.profilePath } : {}),
+              knownForTitles: [],
+            }
+          : null,
+      );
+      setPersonQuery("");
+      setPersonHits([]);
+      setIncludeMinorCredits(Boolean(w.config.includeMinorCredits));
+    }
+
     setBuilderOpen(true);
   }
 
@@ -692,7 +769,7 @@ export default function Home() {
             ) : (
               <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3">
                 {visibleWatches.map((w) => (
-                  <WatchCard key={w.id} watch={w} onDelete={onDelete} />
+                  <WatchCard key={w.id} watch={w} onDelete={onDelete} onEdit={openEditor} />
                 ))}
               </div>
             )}
@@ -808,7 +885,11 @@ export default function Home() {
         )}
       </main>
 
-      <SlideOver open={builderOpen} title="New watch" onClose={() => setBuilderOpen(false)}>
+      <SlideOver
+        open={builderOpen}
+        title={editingId ? "Edit watch" : "New watch"}
+        onClose={closeBuilder}
+      >
         <WatchForm
           source={source}
           onSourceChange={setSource}
@@ -882,8 +963,9 @@ export default function Home() {
           screenFull={screenFull}
           canCreate={canCreate}
           busy={busy}
-          onCreate={onCreate}
-          onCancel={() => setBuilderOpen(false)}
+          onCreate={onSave}
+          onCancel={closeBuilder}
+          editing={Boolean(editingId)}
         />
       </SlideOver>
 

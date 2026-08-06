@@ -14,17 +14,26 @@ export function WatchCard({
   watch,
   current,
   onDelete,
+  onEdit,
 }: {
   watch: WatchRow;
   current?: number;
   onDelete: (id: string) => void;
+  onEdit: (watch: WatchRow) => void;
 }) {
   const { firing, value, delta, fill } = describeWatch(watch, current);
   const Icon = watchIcon(watch.source, watch.config.rule?.metric);
   const image = watchImageUrl(watch);
 
   return (
-    <View style={styles.card}>
+    // Tapping the card opens the editor; the delete button stops the press
+    // from reaching here so the two don't fight.
+    <Pressable
+      style={styles.card}
+      onPress={() => onEdit(watch)}
+      accessibilityRole="button"
+      accessibilityLabel={`Edit watch for ${watchTitle(watch)}`}
+    >
       <View style={styles.header}>
         <View style={styles.identity}>
           {image ? (
@@ -46,7 +55,12 @@ export function WatchCard({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Delete watch for ${watchTitle(watch)}`}
-            onPress={() => onDelete(watch.id)}
+            onPress={(e) => {
+              // Without this the card's own press fires too and the editor
+              // opens on the watch that was just deleted.
+              e.stopPropagation();
+              onDelete(watch.id);
+            }}
             hitSlop={8}
             style={styles.delete}
           >
@@ -61,7 +75,7 @@ export function WatchCard({
       </View>
 
       <ThresholdBar fill={fill} firing={firing} />
-    </View>
+    </Pressable>
   );
 }
 

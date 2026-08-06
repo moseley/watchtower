@@ -56,6 +56,7 @@ import {
   reverseGeocode,
   searchArtists,
   searchPeople,
+  updateWatch,
   type ArtistHit,
   type PersonHit,
   type GeocodeResult,
@@ -141,10 +142,12 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [lastPush, setLastPush] = useState<string | null>(null);
 
-  // presentation only — which sources the list shows, and whether the builder
+  // presentation only — which sources the list shows, and whether the builder
   // sheet is open. Neither touches what is fetched or how a watch is made.
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [builderOpen, setBuilderOpen] = useState(false);
+  /** Id of the watch being edited; null while building a new one. */
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   // weather form
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -200,7 +203,7 @@ export default function App() {
         // the token, never orphans the watches already created.
         let id = await AsyncStorage.getItem(OWNER_KEY);
 
-        // Read the existing permission without prompting — the prompt belongs
+        // Read the existing permission without prompting — the prompt belongs
         // behind the button, not on first launch.
         const push = await getExpoPushToken({ request: false });
         if (push.ok) {
@@ -230,7 +233,7 @@ export default function App() {
       received = Notifications.addNotificationReceivedListener((n) => {
         const t = n.request.content.title ?? "Notification";
         const b = n.request.content.body ?? "";
-        setLastPush(`${t} — ${b}`);
+        setLastPush(`${t} — ${b}`);
         if (currentOwner) void refreshNotifications(currentOwner);
       });
 
@@ -263,7 +266,7 @@ export default function App() {
     try {
       const { status: perm } = await Location.requestForegroundPermissionsAsync();
       if (perm !== "granted") {
-        if (explicit) setStatus("Location permission denied — type a city or zip instead.");
+        if (explicit) setStatus("Location permission denied — type a city or zip instead.");
         return;
       }
 
@@ -276,7 +279,7 @@ export default function App() {
         ])) ?? (await Location.getLastKnownPositionAsync({ maxAge: 10 * 60 * 1000 }));
 
       if (!pos) {
-        if (explicit) setStatus("Couldn't get a location fix — type a city or zip instead.");
+        if (explicit) setStatus("Couldn't get a location fix — type a city or zip instead.");
         return;
       }
       // Don't clobber a location the user typed while we were waiting.
@@ -292,7 +295,7 @@ export default function App() {
       }
       setLocationEdited(false);
     } catch {
-      if (explicit) setStatus("Couldn't get a location fix — type a city or zip instead.");
+      if (explicit) setStatus("Couldn't get a location fix — type a city or zip instead.");
     } finally {
       setLocating(false);
     }
@@ -314,7 +317,7 @@ export default function App() {
       if (!push.ok) {
         setStatus(
           push.reason === "denied"
-            ? "Notifications are off. Turn them on in Settings › Watchtower › Notifications."
+            ? "Notifications are off. Turn them on in Settings ⬺ Watchtower ⬺ Notifications."
             : (push.message ?? "Couldn't turn on notifications."),
         );
         return;
@@ -427,7 +430,7 @@ export default function App() {
         setLocationHits(hit.results);
       } catch (err) {
         if ((err as Error).name === "AbortError") return; // superseded
-        setLocationHits([]); // e.g. 404 no match — the hint covers it
+        setLocationHits([]); // e.g. 404 no match — the hint covers it
       } finally {
         if (!controller.signal.aborted) setSearchingLocation(false);
       }
@@ -495,7 +498,7 @@ export default function App() {
     return null;
   }
 
-  async function createWeatherWatch(id: string) {
+  async function buildWeatherPayload() {
     let loc: { latitude: number; longitude: number; label: string };
     if (locationEdited || !coords) {
       const query = locationText.trim();
@@ -528,19 +531,17 @@ export default function App() {
       rule,
     });
 
-    await createWatch({
-      ownerId: id,
-      source: "weather",
+    return {
+      source: "weather" as const,
       label: `${loc.label} · ${METRIC_NAMES[metric]}`,
       config,
-    });
+    };
   }
 
-  async function createMusicWatch(id: string) {
+  function buildMusicPayload() {
     if (!artist) throw new Error("Pick an artist first");
-    await createWatch({
-      ownerId: id,
-      source: "music",
+    return {
+      source: "music" as const,
       label: artist.name,
       config: {
         artist: {
@@ -550,42 +551,127 @@ export default function App() {
         },
         includeSingles,
       },
-    });
-    setArtist(null);
-    setArtistHits([]);
-    setArtistQuery("");
+    };
   }
 
-  async function createScreenWatch(id: string) {
+  function openBuilder() {
+    setStatus("");
+    setEditingId(null);
+    setBuilderOpen(true);
+  }
+
+  function closeBuilder() {
+    setBuilderOpen(false);
+    setEditingId(null);
+  }
+
+  /** Load an existing watch back into the form so it can be changed. */
+  function openEditor(w: WatchRow) {
+    setStatus("");
+    setEditingId(w.id);
+    setSource(w.source as Source);
+
+    if (w.source === "weather") {
+      const rule = w.config.rule ?? {};
+      const loc = w.config.location as
+        | { latitude?: number; longitude?: number; label?: string }
+        | undefined;
+      if (loc?.latitude !== undefined && loc?.longitude !== undefined) {
+        setCoords({ latitude: loc.latitude, longitude: loc.longitude });
+      }
+      setLocationText(loc?.label ?? "");
+      // Already resolved, so don't re-geocode unless the text is changed.
+      setLocationEdited(false);
+      setLocationHits([]);
+      userTypedRef.current = false;
+      const nextMetric = (rule.metric as Metric) ?? "temperature";
+      setMetric(nextMetric);
+      setComparator((rule.comparator as Comparator) ?? "below");
+      setTempUnit((rule.unit as TempUnit) ?? "F");
+      setThreshold(rule.threshold !== undefined ? String(rule.threshold) : DEFAULT_THRESHOLD.F);
+      setNoticeHours(rule.withinHours ?? DEFAULT_NOTICE[nextMetric]);
+      lastConversionRef.current = null;
+    } else if (w.source === "music") {
+      const a = w.config.artist;
+      setArtist(
+        a?.mbid && a?.name
+          ? {
+              mbid: a.mbid,
+              name: a.name,
+              ...(a.disambiguation ? { disambiguation: a.disambiguation } : {}),
+            }
+          : null,
+      );
+      setArtistQuery("");
+      setArtistHits([]);
+      setIncludeSingles(Boolean(w.config.includeSingles));
+    } else {
+      const p = w.config.person;
+      setPerson(
+        p?.tmdbId !== undefined && p?.name
+          ? {
+              tmdbId: p.tmdbId,
+              name: p.name,
+              ...(p.knownFor ? { knownFor: p.knownFor } : {}),
+              ...(p.profilePath ? { profilePath: p.profilePath } : {}),
+              knownForTitles: [],
+            }
+          : null,
+      );
+      setPersonQuery("");
+      setPersonHits([]);
+      setIncludeMinorCredits(Boolean(w.config.includeMinorCredits));
+    }
+
+    setBuilderOpen(true);
+  }
+
+  function buildScreenPayload() {
     if (!person) throw new Error("Pick someone first");
-    await createWatch({
-      ownerId: id,
-      source: "screen",
+    return {
+      source: "screen" as const,
       label: person.name,
       config: {
         person: {
           tmdbId: person.tmdbId,
           name: person.name,
           ...(person.knownFor ? { knownFor: person.knownFor } : {}),
+          ...(person.profilePath ? { profilePath: person.profilePath } : {}),
         },
         includeMinorCredits,
       },
-    });
-    setPerson(null);
-    setPersonHits([]);
-    setPersonQuery("");
+    };
   }
 
-  async function onCreate() {
+  /** Creates or updates, depending on whether the form was opened on a watch. */
+  async function onSave() {
     if (!ownerId) return;
     setBusy(true);
     try {
-      if (source === "weather") await createWeatherWatch(ownerId);
-      else if (source === "screen") await createScreenWatch(ownerId);
-      else await createMusicWatch(ownerId);
-      setStatus("Watch created");
+      const payload =
+        source === "weather"
+          ? await buildWeatherPayload()
+          : source === "screen"
+            ? buildScreenPayload()
+            : buildMusicPayload();
+
+      if (editingId) {
+        await updateWatch(editingId, ownerId, payload);
+        setStatus("Watch updated");
+      } else {
+        await createWatch({ ownerId, ...payload });
+        setStatus("Watch created");
+        // Only clear the pickers after a create; an edit keeps its subject.
+        setArtist(null);
+        setArtistHits([]);
+        setArtistQuery("");
+        setPerson(null);
+        setPersonHits([]);
+        setPersonQuery("");
+      }
+
       await refreshWatches(ownerId);
-      setBuilderOpen(false);
+      closeBuilder();
     } catch (err) {
       setStatus(`${(err as Error).message}`);
     } finally {
@@ -614,8 +700,8 @@ export default function App() {
     (source === "weather"
       ? !thresholdProblem && locationText.trim() !== ""
       : source === "screen"
-        ? Boolean(person) && !screenFull
-        : Boolean(artist) && !musicFull);
+        ? Boolean(person) && (Boolean(editingId) || !screenFull)
+        : Boolean(artist) && (Boolean(editingId) || !musicFull));
 
   const counts = {
     all: watches.length,
@@ -700,7 +786,7 @@ export default function App() {
           <View style={styles.noticeCard}>
             <Text style={styles.noticeTitle}>Notifications are off</Text>
             <Text style={styles.noticeBody}>
-              You can still set up watches — they just won&apos;t reach you until notifications
+              You can still set up watches — they just won&apos;t reach you until notifications
               are on.
             </Text>
             <Button
@@ -750,7 +836,7 @@ export default function App() {
             ) : (
               <View style={styles.cardList}>
                 {visibleWatches.map((w) => (
-                  <WatchCard key={w.id} watch={w} onDelete={onDelete} />
+                  <WatchCard key={w.id} watch={w} onDelete={onDelete} onEdit={openEditor} />
                 ))}
               </View>
             )}
@@ -799,7 +885,7 @@ export default function App() {
               <Text style={styles.panelBody}>
                 {pushEnabled
                   ? "This device is registered for alerts."
-                  : "Not registered yet — turn them on to start receiving alerts."}
+                  : "Not registered yet — turn them on to start receiving alerts."}
               </Text>
               {!pushEnabled && (
                 <Button
@@ -839,16 +925,16 @@ export default function App() {
         visible={builderOpen}
         animationType="slide"
         transparent
-        onRequestClose={() => setBuilderOpen(false)}
+        onRequestClose={closeBuilder}
       >
-        <Pressable style={styles.backdrop} onPress={() => setBuilderOpen(false)} />
+        <Pressable style={styles.backdrop} onPress={closeBuilder} />
         <View style={styles.sheet}>
           <View style={styles.sheetHeader}>
-            <Text style={styles.sheetTitle}>New watch</Text>
+            <Text style={styles.sheetTitle}>{editingId ? "Edit watch" : "New watch"}</Text>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Close"
-              onPress={() => setBuilderOpen(false)}
+              onPress={closeBuilder}
               hitSlop={8}
             >
               <X size={20} color={colors.muted} />
@@ -872,8 +958,15 @@ export default function App() {
                 return (
                   <Pressable
                     key={value}
+                    // Changing source turns it into a different watch, and its
+                    // history would no longer describe it. The API rejects it.
+                    disabled={Boolean(editingId)}
                     onPress={() => setSource(value)}
-                    style={[styles.sourceTile, selected && styles.sourceTileSelected]}
+                    style={[
+                      styles.sourceTile,
+                      selected && styles.sourceTileSelected,
+                      Boolean(editingId) && !selected && styles.sourceTileLocked,
+                    ]}
                   >
                     <Icon size={17} color={selected ? colors.accent : colors.ink} />
                     <Text style={[styles.sourceLabel, selected && styles.sourceLabelSelected]}>
@@ -942,10 +1035,10 @@ export default function App() {
                   {locationEdited && locationHits.length === 0 && (
                     <Text style={styles.hint}>
                       {searchingLocation
-                        ? "Looking up…"
+                        ? "Looking up⬦"
                         : locationText.trim().length < 2
                           ? "Type a city or zip code"
-                          : "No match yet — the closest one is used when you create the watch"}
+                          : "No match yet — the closest one is used when you create the watch"}
                     </Text>
                   )}
                 </View>
@@ -1039,7 +1132,7 @@ export default function App() {
                     })}
                   </View>
                   <Text style={styles.hint}>
-                    How far ahead to look. A shorter setting never misses anything — it just
+                    How far ahead to look. A shorter setting never misses anything — it just
                     tells you closer to the time.
                   </Text>
                 </View>
@@ -1076,7 +1169,7 @@ export default function App() {
                         <TextField
                           value={personQuery}
                           onChangeText={setPersonQuery}
-                          placeholder="Start typing a name…"
+                          placeholder="Start typing a name⬦"
                           style={styles.inputPadded}
                         />
                       </View>
@@ -1099,7 +1192,7 @@ export default function App() {
                       {(searchingPerson || noPersonResults) && (
                         <Text style={styles.hint}>
                           {searchingPerson
-                            ? "Searching…"
+                            ? "Searching⬦"
                             : `No people found for "${personQuery.trim()}"`}
                         </Text>
                       )}
@@ -1123,7 +1216,7 @@ export default function App() {
 
                 {screenFull && (
                   <Text style={styles.warning}>
-                    You&apos;re watching {MUSIC_LIMIT} people — delete one to add another.
+                    You&apos;re watching {MUSIC_LIMIT} people — delete one to add another.
                   </Text>
                 )}
               </>
@@ -1155,9 +1248,9 @@ export default function App() {
                   {artist && (
                     <Text style={styles.hint}>
                       {loadingRelease
-                        ? "Checking their last release…"
+                        ? "Checking their last release⬦"
                         : lastRelease
-                          ? `Last release: ${lastRelease.title} — ${daysSince(lastRelease.date)} days ago`
+                          ? `Last release: ${lastRelease.title} — ${daysSince(lastRelease.date)} days ago`
                           : "No dated release found for them yet"}
                     </Text>
                   )}
@@ -1169,7 +1262,7 @@ export default function App() {
                         <TextField
                           value={artistQuery}
                           onChangeText={setArtistQuery}
-                          placeholder="Start typing a name…"
+                          placeholder="Start typing a name⬦"
                           style={styles.inputPadded}
                         />
                       </View>
@@ -1193,7 +1286,7 @@ export default function App() {
                       {(searching || noResults) && (
                         <Text style={styles.hint}>
                           {searching
-                            ? "Searching…"
+                            ? "Searching⬦"
                             : `No artists found for "${artistQuery.trim()}"`}
                         </Text>
                       )}
@@ -1216,7 +1309,7 @@ export default function App() {
 
                 {musicFull && (
                   <Text style={styles.warning}>
-                    You&apos;re watching {MUSIC_LIMIT} artists — delete one to add another.
+                    You&apos;re watching {MUSIC_LIMIT} artists — delete one to add another.
                   </Text>
                 )}
               </>
@@ -1231,10 +1324,10 @@ export default function App() {
           </ScrollView>
 
           <View style={styles.sheetFooter}>
-            <Button variant="ghost" label="Cancel" onPress={() => setBuilderOpen(false)} />
+            <Button variant="ghost" label="Cancel" onPress={closeBuilder} />
             <Button
-              label="Create watch"
-              onPress={onCreate}
+              label={editingId ? "Save changes" : "Create watch"}
+              onPress={onSave}
               disabled={!canCreate}
               busy={busy}
               style={styles.flex1}
@@ -1382,6 +1475,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.hairline,
   },
+  sourceTileLocked: { opacity: 0.4 },
   sourceTileSelected: {
     borderWidth: 1.5,
     borderColor: colors.accent,

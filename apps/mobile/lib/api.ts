@@ -46,6 +46,18 @@ export function createWatch(input: CreateWatchInput & { ownerId: string }) {
   return post<{ watch: { id: string } }>("/api/watches", input);
 }
 
+/** Update an existing watch. Its source can't change — the API rejects that. */
+export function updateWatch(id: string, ownerId: string, input: CreateWatchInput) {
+  return request<{ watch: { id: string } }>(
+    `/api/watches/${encodeURIComponent(id)}?ownerId=${encodeURIComponent(ownerId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
 export function deleteWatch(id: string, ownerId: string) {
   return request<{ ok: boolean }>(
     `/api/watches/${encodeURIComponent(id)}?ownerId=${encodeURIComponent(ownerId)}`,
@@ -66,7 +78,7 @@ export interface WatchRow {
       unit?: string;
       withinHours?: number;
     };
-    artist?: { name?: string; mbid?: string };
+    artist?: { name?: string; mbid?: string; disambiguation?: string };
     includeSingles?: boolean;
     person?: { name?: string; tmdbId?: number; knownFor?: string; profilePath?: string };
     includeMinorCredits?: boolean;

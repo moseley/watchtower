@@ -11,7 +11,7 @@ export interface WatchRow {
       unit?: string;
       withinHours?: number;
     };
-    artist?: { name?: string; mbid?: string };
+    artist?: { name?: string; mbid?: string; disambiguation?: string };
     includeSingles?: boolean;
     person?: { name?: string; tmdbId?: number; knownFor?: string; profilePath?: string };
     includeMinorCredits?: boolean;
